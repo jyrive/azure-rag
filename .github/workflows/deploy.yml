@@ -40,9 +40,20 @@ jobs:
           AZURE_SUBSCRIPTION_ID_VALUE: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          echo "Configured AZURE_CLIENT_ID: $AZURE_CLIENT_ID_VALUE"
-          echo "Configured AZURE_TENANT_ID: $AZURE_TENANT_ID_VALUE"
-          echo "Configured AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID_VALUE"
+          fingerprint() {
+            local label="$1"
+            local value="$2"
+            local suffix="${value: -6}"
+            local hash
+            hash=$(printf '%s' "$value" | sha256sum | awk '{print $1}')
+            echo "$label length: ${#value}"
+            echo "$label suffix: $suffix"
+            echo "$label sha256: $hash"
+          }
+
+          fingerprint "AZURE_CLIENT_ID" "$AZURE_CLIENT_ID_VALUE"
+          fingerprint "AZURE_TENANT_ID" "$AZURE_TENANT_ID_VALUE"
+          fingerprint "AZURE_SUBSCRIPTION_ID" "$AZURE_SUBSCRIPTION_ID_VALUE"
 
       - name: Azure login
         uses: azure/login@v2
