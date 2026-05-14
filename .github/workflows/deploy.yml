@@ -45,7 +45,7 @@ jobs:
             local value="$2"
             local suffix="${value: -6}"
             local hash
-            hash=$(printf '%s' "$value" | sha256sum | awk '{print $1}')
+            hash=$(printf '%s' "$value" | sha256sum | cut -d ' ' -f1)
             echo "$label length: ${#value}"
             echo "$label suffix: $suffix"
             echo "$label sha256: $hash"
@@ -91,7 +91,7 @@ jobs:
             AUTH_PRINCIPAL=$(az account show --query user.name -o tsv 2>/dev/null || true)
             if [ -n "$AUTH_PRINCIPAL" ]; then
               AUTH_SUFFIX="${AUTH_PRINCIPAL: -6}"
-              AUTH_HASH=$(printf '%s' "$AUTH_PRINCIPAL" | sha256sum | awk '{print $1}')
+              AUTH_HASH=$(printf '%s' "$AUTH_PRINCIPAL" | sha256sum | cut -d ' ' -f1)
               echo "Authenticated principal suffix: $AUTH_SUFFIX"
               echo "Authenticated principal sha256: $AUTH_HASH"
             fi
