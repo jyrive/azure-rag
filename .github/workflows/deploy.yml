@@ -96,9 +96,11 @@ jobs:
               echo "Authenticated principal sha256: $AUTH_HASH"
             fi
 
-            if ! az group list --top 1 >/dev/null 2>&1; then
+            if ! az group list --query "[].name" -o tsv >/dev/null 2>/tmp/az-group-list.err; then
               echo "::error::Management-plane access check failed for subscription '$TARGET_SUBSCRIPTION'."
               echo "::error::Grant at least Contributor role to app '$TARGET_CLIENT_ID' on /subscriptions/$TARGET_SUBSCRIPTION."
+              echo "az group list error details:"
+              cat /tmp/az-group-list.err
               if [ -n "$AUTH_PRINCIPAL" ]; then
                 echo "Role assignments found for authenticated principal at subscription scope:"
                 az role assignment list \
