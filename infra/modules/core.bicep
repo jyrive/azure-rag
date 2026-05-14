@@ -86,7 +86,7 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
 
 resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
   parent: openAi
-  name: 'gpt-4o-mini'
+  name: 'gpt-4.1-mini'
   sku: {
     name: 'Standard'
     capacity: 10
@@ -94,8 +94,8 @@ resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-1
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4o-mini'
-      version: '2024-07-18'
+      name: 'gpt-4.1-mini'
+      version: '2025-04-14'
     }
     versionUpgradeOption: 'NoAutoUpgrade'
   }
