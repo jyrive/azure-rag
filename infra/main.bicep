@@ -8,7 +8,7 @@ param backendImageTag string = 'latest'
 param frontendSkuName string = 'Standard'
 param enableSwaLinkedBackend bool = true
 
-var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0, 6)
+var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName, location), 0, 6)
 var keyVaultName = toLower('kv-${environmentName}-${shortSuffix}')
 var acrName = toLower('acr${environmentName}${shortSuffix}')
 var cosmosAccountName = toLower('cosmos${environmentName}${shortSuffix}')
