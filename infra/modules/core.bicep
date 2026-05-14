@@ -145,8 +145,6 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 
 var cosmosPrimaryKey = cosmosAccount.listKeys().primaryMasterKey
 var cosmosConnString = 'mongodb://${cosmosAccount.name}:${cosmosPrimaryKey}@${cosmosAccount.name}.mongo.cosmos.azure.com:10255/?ssl=true&retrywrites=false&maxIdleTimeMS=120000&appName=@${cosmosAccount.name}@'
-var eventGridTopicKey = eventGridTopic.listSharedAccessKeys().key1
-
 resource cosmosConnSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'cosmos-connection-string'
@@ -174,8 +172,11 @@ resource eventGridEndpointSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' 
 resource eventGridKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'eventgrid-topic-key'
+  dependsOn: [
+    eventGridTopic
+  ]
   properties: {
-    value: eventGridTopicKey
+    value: eventGridTopic.listSharedAccessKeys().key1
   }
 }
 
