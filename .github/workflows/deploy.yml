@@ -202,11 +202,6 @@ jobs:
               --name "$DEPLOYMENT_NAME" \
               --query properties.outputs.backendAppName.value -o tsv)
 
-            WORKER_APP_NAME=$(az deployment group show \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$DEPLOYMENT_NAME" \
-              --query properties.outputs.workerAppName.value -o tsv)
-
             STATIC_WEB_APP_NAME=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --name "$DEPLOYMENT_NAME" \
@@ -222,7 +217,6 @@ jobs:
             echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
             echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
             echo "backend_app_name=$BACKEND_APP_NAME" >> "$GITHUB_OUTPUT"
-            echo "worker_app_name=$WORKER_APP_NAME" >> "$GITHUB_OUTPUT"
             echo "static_web_app_name=$STATIC_WEB_APP_NAME" >> "$GITHUB_OUTPUT"
             echo "swa_deployment_token=$SWA_DEPLOYMENT_TOKEN" >> "$GITHUB_OUTPUT"
 
@@ -245,17 +239,6 @@ jobs:
             IMAGE_NAME="${{ steps.infra.outputs.acr_login_server }}/${BACKEND_IMAGE_NAME}:${BACKEND_IMAGE_TAG}"
             az containerapp update \
               --name "${{ steps.infra.outputs.backend_app_name }}" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --image "$IMAGE_NAME"
-
-      - name: Update worker container app image
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            IMAGE_NAME="${{ steps.infra.outputs.acr_login_server }}/${BACKEND_IMAGE_NAME}:${BACKEND_IMAGE_TAG}"
-            az containerapp update \
-              --name "${{ steps.infra.outputs.worker_app_name }}" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --image "$IMAGE_NAME"
 

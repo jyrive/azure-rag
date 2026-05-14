@@ -6,8 +6,6 @@ param keyVaultName string
 param acrName string
 param cosmosAccountName string
 param openAiName string
-param openAiCustomSubdomain string
-param eventGridTopicName string
 param containerEnvName string
 
 resource backendIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -76,7 +74,7 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     name: 'S0'
   }
   properties: {
-    customSubDomainName: openAiCustomSubdomain
+    customSubDomainName: openAiName
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       defaultAction: 'Allow'
@@ -121,15 +119,6 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
-resource eventGridTopic 'Microsoft.EventGrid/topics@2022-06-15' = {
-  name: eventGridTopicName
-  location: location
-  properties: {
-    publicNetworkAccess: 'Enabled'
-    inputSchema: 'EventGridSchema'
-  }
-}
-
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerEnvName
   location: location
@@ -161,14 +150,6 @@ resource openAiEndpointSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource eventGridEndpointSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'eventgrid-topic-endpoint'
-  properties: {
-    value: eventGridTopic.properties.endpoint
-  }
-}
-
 output backendIdentityId string = backendIdentity.id
 output backendIdentityClientId string = backendIdentity.properties.clientId
 output backendIdentityPrincipalId string = backendIdentity.properties.principalId
@@ -183,11 +164,6 @@ output openAiNameOut string = openAi.name
 output openAiEndpoint string = openAi.properties.endpoint
 output chatDeploymentName string = chatDeployment.name
 output embeddingDeploymentName string = embeddingDeployment.name
-output eventGridTopicId string = eventGridTopic.id
-output eventGridTopicNameOut string = eventGridTopic.name
-output eventGridTopicEndpoint string = eventGridTopic.properties.endpoint
 output containerEnvId string = containerEnv.id
 output cosmosSecretName string = cosmosConnSecret.name
 output openAiEndpointSecretName string = openAiEndpointSecret.name
-output eventGridEndpointSecretName string = eventGridEndpointSecret.name
-output eventGridKeySecretName string = 'eventgrid-topic-key'
