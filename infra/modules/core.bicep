@@ -172,9 +172,6 @@ resource eventGridEndpointSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' 
 resource eventGridKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'eventgrid-topic-key'
-  dependsOn: [
-    eventGridTopic
-  ]
   properties: {
     value: eventGridTopic.listSharedAccessKeys().key1
   }

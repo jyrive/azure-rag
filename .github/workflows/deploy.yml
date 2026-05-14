@@ -136,6 +136,20 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
+            echo "Purging soft-deleted OpenAI accounts for environment '$DEPLOY_ENVIRONMENT' (if any)..."
+            DELETED_OPENAI_NAMES=$(az cognitiveservices account list-deleted \
+              --query "[?kind=='OpenAI' && contains(name, 'aoai-${DEPLOY_ENVIRONMENT}-')].name" -o tsv 2>/dev/null || true)
+
+            if [ -n "$DELETED_OPENAI_NAMES" ]; then
+              while IFS= read -r OPENAI_NAME; do
+                [ -z "$OPENAI_NAME" ] && continue
+                echo "Purging soft-deleted account: $OPENAI_NAME"
+                az cognitiveservices account purge --name "$OPENAI_NAME" || true
+              done <<< "$DELETED_OPENAI_NAMES"
+            else
+              echo "No matching soft-deleted OpenAI accounts found."
+            fi
+
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
             az deployment group create \
               --name "$DEPLOYMENT_NAME" \
