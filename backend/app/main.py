@@ -76,21 +76,33 @@ def _build_runtime_config() -> dict[str, Any]:
         credential = DefaultAzureCredential()
         secret_client = SecretClient(vault_url=key_vault_url, credential=credential)
 
-        cosmos_secret = secret_client.get_secret(cosmos_secret_name)
-        if cosmos_secret.value:
-            config["cosmosConnectionString"] = cosmos_secret.value
+        try:
+            cosmos_secret = secret_client.get_secret(cosmos_secret_name)
+            if cosmos_secret.value:
+                config["cosmosConnectionString"] = cosmos_secret.value
+        except Exception as error:  # noqa: BLE001
+            config["secretLoadErrors"].append(f"{cosmos_secret_name}: {error}")
 
-        openai_endpoint_secret = secret_client.get_secret(openai_endpoint_secret_name)
-        if openai_endpoint_secret.value:
-            config["openAiEndpoint"] = openai_endpoint_secret.value
+        try:
+            openai_endpoint_secret = secret_client.get_secret(openai_endpoint_secret_name)
+            if openai_endpoint_secret.value:
+                config["openAiEndpoint"] = openai_endpoint_secret.value
+        except Exception as error:  # noqa: BLE001
+            config["secretLoadErrors"].append(f"{openai_endpoint_secret_name}: {error}")
 
-        eventgrid_endpoint_secret = secret_client.get_secret(eventgrid_endpoint_secret_name)
-        if eventgrid_endpoint_secret.value:
-            config["eventGridTopicEndpoint"] = eventgrid_endpoint_secret.value
+        try:
+            eventgrid_endpoint_secret = secret_client.get_secret(eventgrid_endpoint_secret_name)
+            if eventgrid_endpoint_secret.value:
+                config["eventGridTopicEndpoint"] = eventgrid_endpoint_secret.value
+        except Exception as error:  # noqa: BLE001
+            config["secretLoadErrors"].append(f"{eventgrid_endpoint_secret_name}: {error}")
 
-        eventgrid_key_secret = secret_client.get_secret(eventgrid_key_secret_name)
-        if eventgrid_key_secret.value:
-            config["eventGridTopicKey"] = eventgrid_key_secret.value
+        try:
+            eventgrid_key_secret = secret_client.get_secret(eventgrid_key_secret_name)
+            if eventgrid_key_secret.value:
+                config["eventGridTopicKey"] = eventgrid_key_secret.value
+        except Exception as error:  # noqa: BLE001
+            config["secretLoadErrors"].append(f"{eventgrid_key_secret_name}: {error}")
     except Exception as error:  # noqa: BLE001
         config["secretLoadErrors"].append(str(error))
 

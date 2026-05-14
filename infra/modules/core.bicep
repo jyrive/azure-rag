@@ -169,14 +169,6 @@ resource eventGridEndpointSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' 
   }
 }
 
-resource eventGridKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'eventgrid-topic-key'
-  properties: {
-    value: eventGridTopic.listSharedAccessKeys().key1
-  }
-}
-
 output backendIdentityId string = backendIdentity.id
 output backendIdentityClientId string = backendIdentity.properties.clientId
 output backendIdentityPrincipalId string = backendIdentity.properties.principalId
@@ -198,4 +190,4 @@ output containerEnvId string = containerEnv.id
 output cosmosSecretName string = cosmosConnSecret.name
 output openAiEndpointSecretName string = openAiEndpointSecret.name
 output eventGridEndpointSecretName string = eventGridEndpointSecret.name
-output eventGridKeySecretName string = eventGridKeySecret.name
+output eventGridKeySecretName string = 'eventgrid-topic-key'
