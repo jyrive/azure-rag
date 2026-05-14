@@ -157,6 +157,18 @@ jobs:
               echo "No matching soft-deleted Key Vaults found."
             fi
 
+            # If the resource group is mid-delete from a previous run, wait it out
+            # before trying to (re)create. Otherwise az group create races and fails.
+            for i in $(seq 1 60); do
+              RG_STATE=$(az group show --name "$AZURE_RESOURCE_GROUP" --query properties.provisioningState -o tsv 2>/dev/null || echo "NotFound")
+              if [ "$RG_STATE" != "Deleting" ]; then
+                echo "Resource group state: $RG_STATE"
+                break
+              fi
+              echo "Resource group is still Deleting; waiting (attempt $i/60)..."
+              sleep 10
+            done
+
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
             az deployment group create \
               --name "$DEPLOYMENT_NAME" \
