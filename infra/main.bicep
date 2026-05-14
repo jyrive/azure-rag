@@ -12,17 +12,24 @@ param containerAppsLocation string = 'northeurope'
 @description('SKU for the Static Web App. Free is fine for dev.')
 param frontendSkuName string = 'Free'
 
-@description('Public container image used as the backend placeholder until we wire up our own ACR + image.')
+@description('Fully-qualified container image for the backend. Defaults to a public placeholder so the template is usable before ACR exists; the workflow overrides this with our ACR-built image.')
 param backendImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
-// Stable suffix: NOT location-dependent, so switching regions never invents new
-// resource names and orphans existing ones.
+@description('Resource ID of the user-assigned managed identity used to pull from ACR. Empty means no registry auth (placeholder image only).')
+param userAssignedIdentityId string = ''
+
+@description('ACR login server (e.g. crdevgv7ax7.azurecr.io). Empty means no registry auth is configured on the container app.')
+param acrLoginServer string = ''
+
+@description('Container port the backend listens on. FastAPI/uvicorn defaults to 8000; the public placeholder serves 80.')
+param backendTargetPort int = 8000
+
 var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0, 6)
-// Region is baked into the env name only, so we can recreate it in a new region
-// without colliding with a CreateFailed instance left over in an old region.
 var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containerAppsLocation)}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
 var staticSiteName = toLower('swa${environmentName}${shortSuffix}')
+
+var useUami = !empty(userAssignedIdentityId) && !empty(acrLoginServer)
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerEnvName
@@ -33,15 +40,29 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: backendAppName
   location: containerAppsLocation
+  identity: useUami ? {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
+  } : {
+    type: 'None'
+  }
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
       ingress: {
         external: true
-        targetPort: 80
+        targetPort: backendTargetPort
         transport: 'auto'
         allowInsecure: false
       }
+      registries: useUami ? [
+        {
+          server: acrLoginServer
+          identity: userAssignedIdentityId
+        }
+      ] : []
     }
     template: {
       containers: [

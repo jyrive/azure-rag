@@ -27,6 +27,7 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
       AZURE_RESOURCE_GROUP: rg-azure-rag-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
       DEPLOYMENT_NAME: azure-rag-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+      REGISTRY_DEPLOYMENT_NAME: azure-rag-registry-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,8 +39,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy infrastructure
-        id: infra
+      - name: Deploy registry + identity
+        id: registry
         uses: azure/cli@v2
         with:
           inlineScript: |
@@ -59,10 +60,57 @@ jobs:
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
 
             az deployment group create \
+              --name "$REGISTRY_DEPLOYMENT_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --template-file infra/registry.bicep \
+              --parameters environmentName="$DEPLOY_ENVIRONMENT"
+
+            ACR_NAME=$(az deployment group show -g "$AZURE_RESOURCE_GROUP" -n "$REGISTRY_DEPLOYMENT_NAME" --query properties.outputs.acrName.value -o tsv)
+            ACR_LOGIN_SERVER=$(az deployment group show -g "$AZURE_RESOURCE_GROUP" -n "$REGISTRY_DEPLOYMENT_NAME" --query properties.outputs.acrLoginServer.value -o tsv)
+            UAMI_ID=$(az deployment group show -g "$AZURE_RESOURCE_GROUP" -n "$REGISTRY_DEPLOYMENT_NAME" --query properties.outputs.uamiId.value -o tsv)
+
+            echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+            echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+            echo "uami_id=$UAMI_ID" >> "$GITHUB_OUTPUT"
+            echo "ACR:  $ACR_LOGIN_SERVER"
+            echo "UAMI: $UAMI_ID"
+
+      - name: Build & push backend image to ACR
+        id: image
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            IMAGE_TAG="${GITHUB_SHA::7}"
+            ACR_NAME="${{ steps.registry.outputs.acr_name }}"
+            ACR_LOGIN_SERVER="${{ steps.registry.outputs.acr_login_server }}"
+            IMAGE_REF="$ACR_LOGIN_SERVER/backend:$IMAGE_TAG"
+
+            az acr build \
+              --registry "$ACR_NAME" \
+              --image "backend:$IMAGE_TAG" \
+              --file backend/Dockerfile \
+              backend
+
+            echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+            echo "Pushed: $IMAGE_REF"
+
+      - name: Deploy infrastructure
+        id: infra
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+
+            az deployment group create \
               --name "$DEPLOYMENT_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --template-file infra/main.bicep \
-              --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam
+              --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam \
+              --parameters \
+                backendImage="${{ steps.image.outputs.image_ref }}" \
+                userAssignedIdentityId="${{ steps.registry.outputs.uami_id }}" \
+                acrLoginServer="${{ steps.registry.outputs.acr_login_server }}"
 
             STATIC_WEB_APP_NAME=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
