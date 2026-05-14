@@ -104,6 +104,9 @@ resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-1
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
   parent: openAi
   name: 'text-embedding-3-small'
+  dependsOn: [
+    chatDeployment
+  ]
   sku: {
     name: 'Standard'
     capacity: 10
