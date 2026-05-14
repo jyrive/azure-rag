@@ -61,6 +61,51 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      - name: Preflight Azure subscription and RBAC access
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+
+            TARGET_SUBSCRIPTION="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+            TARGET_TENANT="${{ secrets.AZURE_TENANT_ID }}"
+            TARGET_CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
+
+            echo "Checking Azure access for configured tenant and subscription..."
+            CURRENT_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null || true)
+            if [ -n "$CURRENT_TENANT" ] && [ "$CURRENT_TENANT" != "$TARGET_TENANT" ]; then
+              echo "::warning::Logged in tenant differs from configured tenant secret. loggedInTenant=$CURRENT_TENANT configuredTenant=$TARGET_TENANT"
+            fi
+
+            if ! az account set --subscription "$TARGET_SUBSCRIPTION" 2>/tmp/az-account-set.err; then
+              echo "::error::Configured service principal cannot access subscription '$TARGET_SUBSCRIPTION'."
+              echo "::error::Ensure AZURE_SUBSCRIPTION_ID is correct and assign this app at subscription scope: Contributor + User Access Administrator."
+              cat /tmp/az-account-set.err
+              exit 1
+            fi
+
+            echo "Active subscription context:"
+            az account show --query "{subscriptionId:id,subscriptionName:name,tenantId:tenantId,user:user.name}" -o table
+
+            if ! az group list --top 1 >/dev/null 2>&1; then
+              echo "::error::Management-plane access check failed for subscription '$TARGET_SUBSCRIPTION'."
+              echo "::error::Grant at least Contributor role to app '$TARGET_CLIENT_ID' on /subscriptions/$TARGET_SUBSCRIPTION."
+              exit 1
+            fi
+
+            ASSIGNMENT_COUNT=$(az role assignment list \
+              --assignee "$TARGET_CLIENT_ID" \
+              --scope "/subscriptions/$TARGET_SUBSCRIPTION" \
+              --query "length([])" -o tsv 2>/dev/null || echo "0")
+
+            if [ "$ASSIGNMENT_COUNT" = "0" ]; then
+              echo "::warning::No role assignments were found for app '$TARGET_CLIENT_ID' at subscription scope."
+              echo "::warning::Deployment may fail unless access is inherited from a management group."
+            fi
+
+            echo "Azure access preflight passed."
 
       - name: Debug resolved Azure account context
         uses: azure/cli@v2
