@@ -1,0 +1,30 @@
+services:
+  backend:
+    image: python:3.11-slim
+    working_dir: /workspace/backend
+    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT:-8000} --reload"
+    env_file:
+      - .env
+    environment:
+      AZURE_ENVIRONMENT: ${AZURE_ENVIRONMENT:-local}
+      KEY_VAULT_URL: ${KEY_VAULT_URL:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/workspace/backend
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /workspace/frontend
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT:-5173}"
+    env_file:
+      - .env
+    environment:
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://backend:8000}
+      PUBLIC_APP_NAME: ${PUBLIC_APP_NAME:-azure-rag}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/workspace/frontend
+    depends_on:
+      - backend
