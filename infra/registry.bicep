@@ -33,7 +33,7 @@ resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
 // subscriptionResourceId() approach that produced RoleDefinitionDoesNotExist.
 resource acrPullRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
   scope: subscription()
-  name: '7f951dda-4ed3-11e8-bbf0-0a580a020228'
+  name: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 }
 
 resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
