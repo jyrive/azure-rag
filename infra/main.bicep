@@ -2,7 +2,6 @@ targetScope = 'resourceGroup'
 
 param environmentName string
 param location string = resourceGroup().location
-param openAiLocation string = 'eastus'
 param backendImageName string = 'azure-rag-backend'
 param backendImageTag string = 'latest'
 param frontendSkuName string = 'Free'
@@ -16,19 +15,16 @@ var cosmosAccountName = toLower('cosmos${environmentName}${shortSuffix}')
 var containerEnvName = 'aca-${environmentName}-${shortSuffix}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
 var staticSiteName = toLower('swa${environmentName}${shortSuffix}')
-var openAiName = toLower('aoai-${environmentName}-${shortSuffix}')
 
 module core './modules/core.bicep' = {
   name: 'core'
   params: {
     location: location
-    openAiLocation: openAiLocation
     environmentName: environmentName
     shortSuffix: shortSuffix
     keyVaultName: keyVaultName
     acrName: acrName
     cosmosAccountName: cosmosAccountName
-    openAiName: openAiName
     containerEnvName: containerEnvName
   }
 }
@@ -40,7 +36,6 @@ module access './modules/access.bicep' = {
   params: {
     keyVaultId: core.outputs.keyVaultId
     acrId: core.outputs.acrId
-    openAiId: core.outputs.openAiId
     backendIdentityPrincipalId: core.outputs.backendIdentityPrincipalId
   }
 }
@@ -62,9 +57,6 @@ module apps './modules/apps.bicep' = {
     backendIdentityClientId: core.outputs.backendIdentityClientId
     keyVaultUrl: core.outputs.keyVaultUrl
     cosmosSecretName: core.outputs.cosmosSecretName
-    openAiEndpointSecretName: core.outputs.openAiEndpointSecretName
-    chatDeploymentName: core.outputs.chatDeploymentName
-    embeddingDeploymentName: core.outputs.embeddingDeploymentName
   }
 }
 
@@ -82,8 +74,6 @@ output keyVaultUrl string = core.outputs.keyVaultUrl
 output acrLoginServer string = core.outputs.acrLoginServer
 output acrName string = core.outputs.acrNameOut
 output cosmosAccountName string = core.outputs.cosmosAccountNameOut
-output openAiName string = core.outputs.openAiNameOut
-output openAiEndpoint string = core.outputs.openAiEndpoint
 output backendAppFqdn string = apps.outputs.backendAppFqdn
 output backendAppName string = apps.outputs.backendAppNameOut
 output staticSiteNameOut string = frontend.outputs.staticSiteNameOut

@@ -9,9 +9,6 @@ param backendIdentityId string
 param backendIdentityClientId string
 param keyVaultUrl string
 param cosmosSecretName string
-param openAiEndpointSecretName string
-param chatDeploymentName string
-param embeddingDeploymentName string
 
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: backendAppName
@@ -63,18 +60,6 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'KEYVAULT_COSMOS_SECRET_NAME'
               value: cosmosSecretName
-            }
-            {
-              name: 'KEYVAULT_OPENAI_ENDPOINT_SECRET_NAME'
-              value: openAiEndpointSecretName
-            }
-            {
-              name: 'AZURE_OPENAI_CHAT_DEPLOYMENT'
-              value: chatDeploymentName
-            }
-            {
-              name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT'
-              value: embeddingDeploymentName
             }
           ]
         }

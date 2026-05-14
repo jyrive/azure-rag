@@ -136,28 +136,6 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
-            echo "Purging soft-deleted OpenAI accounts for environment '$DEPLOY_ENVIRONMENT' (if any)..."
-            DELETED_OPENAI_ROWS=$(az cognitiveservices account list-deleted \
-              --query "[?kind=='OpenAI' && contains(name, 'aoai-${DEPLOY_ENVIRONMENT}-')].[name, location, id]" -o tsv 2>/dev/null || true)
-
-            if [ -n "$DELETED_OPENAI_ROWS" ]; then
-              while IFS=$'\t' read -r OPENAI_NAME OPENAI_LOCATION OPENAI_ID; do
-                [ -z "$OPENAI_NAME" ] && continue
-                OPENAI_RG=$(printf '%s' "$OPENAI_ID" | sed -n 's#.*resourceGroups/\([^/]*\)/.*#\1#p')
-                echo "Purging soft-deleted account: $OPENAI_NAME (rg=$OPENAI_RG, location=$OPENAI_LOCATION)"
-                if [ -n "$OPENAI_RG" ] && [ -n "$OPENAI_LOCATION" ]; then
-                  az cognitiveservices account purge \
-                    --name "$OPENAI_NAME" \
-                    --resource-group "$OPENAI_RG" \
-                    --location "$OPENAI_LOCATION" || true
-                else
-                  echo "Skipping purge for $OPENAI_NAME because required metadata is missing"
-                fi
-              done <<< "$DELETED_OPENAI_ROWS"
-            else
-              echo "No matching soft-deleted OpenAI accounts found."
-            fi
-
             echo "Purging soft-deleted Key Vaults for environment '$DEPLOY_ENVIRONMENT' (if any)..."
             DELETED_KV_ROWS=$(az keyvault list-deleted \
               --query "[?contains(name, 'kv-${DEPLOY_ENVIRONMENT}-')].[name, properties.location]" -o tsv 2>/dev/null || true)
