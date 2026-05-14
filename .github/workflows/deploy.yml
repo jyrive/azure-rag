@@ -158,6 +158,27 @@ jobs:
               echo "No matching soft-deleted OpenAI accounts found."
             fi
 
+            echo "Purging soft-deleted Key Vaults for environment '$DEPLOY_ENVIRONMENT' (if any)..."
+            DELETED_KV_ROWS=$(az keyvault list-deleted \
+              --query "[?contains(name, 'kv-${DEPLOY_ENVIRONMENT}-')].[name, properties.location]" -o tsv 2>/dev/null || true)
+
+            if [ -n "$DELETED_KV_ROWS" ]; then
+              while IFS=$'\t' read -r KV_NAME KV_LOCATION; do
+                [ -z "$KV_NAME" ] && continue
+                echo "Purging soft-deleted Key Vault: $KV_NAME (location=$KV_LOCATION)"
+                if [ -n "$KV_LOCATION" ]; then
+                  if ! az keyvault purge --name "$KV_NAME" --location "$KV_LOCATION"; then
+                    echo "Purge failed for $KV_NAME, attempting recovery instead..."
+                    az keyvault recover --name "$KV_NAME" || true
+                  fi
+                else
+                  echo "Skipping purge for $KV_NAME because location metadata is missing"
+                fi
+              done <<< "$DELETED_KV_ROWS"
+            else
+              echo "No matching soft-deleted Key Vaults found."
+            fi
+
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
             az deployment group create \
               --name "$DEPLOYMENT_NAME" \
