@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'infra/**'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       environment:
@@ -19,9 +24,14 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
     env:
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
@@ -108,9 +118,7 @@ jobs:
               --template-file infra/main.bicep \
               --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam \
               --parameters \
-                backendImage="${{ steps.image.outputs.image_ref }}" \
-                userAssignedIdentityId="${{ steps.registry.outputs.uami_id }}" \
-                acrLoginServer="${{ steps.registry.outputs.acr_login_server }}"
+                backendImage="${{ steps.image.outputs.image_ref }}"
 
             STATIC_WEB_APP_NAME=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \

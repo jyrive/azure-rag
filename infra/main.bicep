@@ -12,14 +12,8 @@ param containerAppsLocation string = 'northeurope'
 @description('SKU for the Static Web App. Free is fine for dev.')
 param frontendSkuName string = 'Free'
 
-@description('Fully-qualified container image for the backend. Defaults to a public placeholder so the template is usable before ACR exists; the workflow overrides this with our ACR-built image.')
-param backendImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
-
-@description('Resource ID of the user-assigned managed identity used to pull from ACR. Empty means no registry auth (placeholder image only).')
-param userAssignedIdentityId string = ''
-
-@description('ACR login server (e.g. crdevgv7ax7.azurecr.io). Empty means no registry auth is configured on the container app.')
-param acrLoginServer string = ''
+@description('Fully-qualified container image for the backend. The workflow passes the ACR-built tag here.')
+param backendImage string
 
 @description('Container port the backend listens on. FastAPI/uvicorn defaults to 8000; the public placeholder serves 80.')
 param backendTargetPort int = 8000
@@ -29,7 +23,18 @@ var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containe
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
 var staticSiteName = toLower('swa${environmentName}${shortSuffix}')
 
-var useUami = !empty(userAssignedIdentityId) && !empty(acrLoginServer)
+// Registry + identity are provisioned separately by registry.bicep using the same
+// suffix scheme, so we can resolve them here without the workflow plumbing IDs through.
+var acrName = toLower('cr${environmentName}${shortSuffix}')
+var uamiName = 'id-${environmentName}-${shortSuffix}'
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' existing = {
+  name: acrName
+}
+
+resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: uamiName
+}
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerEnvName
@@ -40,13 +45,11 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: backendAppName
   location: containerAppsLocation
-  identity: useUami ? {
+  identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${userAssignedIdentityId}': {}
+      '${uami.id}': {}
     }
-  } : {
-    type: 'None'
   }
   properties: {
     managedEnvironmentId: containerEnv.id
@@ -57,12 +60,12 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      registries: useUami ? [
+      registries: [
         {
-          server: acrLoginServer
-          identity: userAssignedIdentityId
+          server: acr.properties.loginServer
+          identity: uami.id
         }
-      ] : []
+      ]
     }
     template: {
       containers: [
