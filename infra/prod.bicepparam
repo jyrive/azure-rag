@@ -1,5 +1,5 @@
 using './main.bicep'
 
 param environmentName = 'prod'
-param location = 'northeurope'
-param backendImageTag = 'prod'
+param location = 'westeurope'
+param containerAppsLocation = 'northeurope'

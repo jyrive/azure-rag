@@ -1,80 +1,78 @@
 targetScope = 'resourceGroup'
 
+@description('Logical environment name, e.g. dev or prod.')
 param environmentName string
-param location string = resourceGroup().location
-param backendImageName string = 'azure-rag-backend'
-param backendImageTag string = 'latest'
+
+@description('Region for the Static Web App. SWA is only available in a fixed set of regions; westeurope works.')
+param location string = 'westeurope'
+
+@description('Region for the Container Apps managed environment. westeurope has been capacity-constrained for AKS-backed managed envs; northeurope is reliable.')
+param containerAppsLocation string = 'northeurope'
+
+@description('SKU for the Static Web App. Free is fine for dev.')
 param frontendSkuName string = 'Free'
 
-// Stable suffix: does NOT include location, so changing regions does not invent
-// new resource names that orphan/soft-delete the old ones.
+@description('Public container image used as the backend placeholder until we wire up our own ACR + image.')
+param backendImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
+
+// Stable suffix: NOT location-dependent, so switching regions never invents new
+// resource names and orphans existing ones.
 var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0, 6)
-var keyVaultName = toLower('kv-${environmentName}-${shortSuffix}')
-var acrName = toLower('acr${environmentName}${shortSuffix}')
-var cosmosAccountName = toLower('cosmos${environmentName}${shortSuffix}')
-var containerEnvName = 'aca-${environmentName}-${shortSuffix}'
+// Region is baked into the env name only, so we can recreate it in a new region
+// without colliding with a CreateFailed instance left over in an old region.
+var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containerAppsLocation)}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
 var staticSiteName = toLower('swa${environmentName}${shortSuffix}')
 
-module core './modules/core.bicep' = {
-  name: 'core'
-  params: {
-    location: location
-    environmentName: environmentName
-    shortSuffix: shortSuffix
-    keyVaultName: keyVaultName
-    acrName: acrName
-    cosmosAccountName: cosmosAccountName
-    containerEnvName: containerEnvName
+resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: containerEnvName
+  location: containerAppsLocation
+  properties: {}
+}
+
+resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: backendAppName
+  location: containerAppsLocation
+  properties: {
+    managedEnvironmentId: containerEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 80
+        transport: 'auto'
+        allowInsecure: false
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'backend'
+          image: backendImage
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 1
+      }
+    }
   }
 }
 
-// Role assignments must exist BEFORE the container app tries to pull from ACR
-// and read Key Vault secrets, otherwise the first revision fails to start.
-module access './modules/access.bicep' = {
-  name: 'access'
-  params: {
-    keyVaultId: core.outputs.keyVaultId
-    acrId: core.outputs.acrId
-    backendIdentityPrincipalId: core.outputs.backendIdentityPrincipalId
+resource staticSite 'Microsoft.Web/staticSites@2023-12-01' = {
+  name: staticSiteName
+  location: location
+  sku: {
+    name: frontendSkuName
+    tier: frontendSkuName
   }
+  properties: {}
 }
 
-module apps './modules/apps.bicep' = {
-  name: 'apps'
-  dependsOn: [
-    access
-  ]
-  params: {
-    environmentName: environmentName
-    location: location
-    backendAppName: backendAppName
-    managedEnvironmentId: core.outputs.containerEnvId
-    acrLoginServer: core.outputs.acrLoginServer
-    backendImageName: backendImageName
-    backendImageTag: backendImageTag
-    backendIdentityId: core.outputs.backendIdentityId
-    backendIdentityClientId: core.outputs.backendIdentityClientId
-    keyVaultUrl: core.outputs.keyVaultUrl
-    cosmosSecretName: core.outputs.cosmosSecretName
-  }
-}
-
-module frontend './modules/frontend.bicep' = {
-  name: 'frontend'
-  params: {
-    staticSiteName: staticSiteName
-    location: location
-    frontendSkuName: frontendSkuName
-  }
-}
-
-output environmentNameOut string = environmentName
-output keyVaultUrl string = core.outputs.keyVaultUrl
-output acrLoginServer string = core.outputs.acrLoginServer
-output acrName string = core.outputs.acrNameOut
-output cosmosAccountName string = core.outputs.cosmosAccountNameOut
-output backendAppFqdn string = apps.outputs.backendAppFqdn
-output backendAppName string = apps.outputs.backendAppNameOut
-output staticSiteNameOut string = frontend.outputs.staticSiteNameOut
-output staticSiteDefaultHostname string = frontend.outputs.staticSiteDefaultHostname
+output backendAppFqdn string = backendApp.properties.configuration.ingress.fqdn
+output backendAppName string = backendApp.name
+output staticSiteNameOut string = staticSite.name
+output staticSiteDefaultHostname string = staticSite.properties.defaultHostname

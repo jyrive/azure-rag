@@ -26,109 +26,17 @@ jobs:
     env:
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
       AZURE_RESOURCE_GROUP: rg-azure-rag-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
-      BACKEND_IMAGE_NAME: azure-rag-backend
-      BACKEND_IMAGE_TAG: ${{ github.sha }}
       DEPLOYMENT_NAME: azure-rag-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug configured Azure IDs
-        env:
-          AZURE_CLIENT_ID_VALUE: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID_VALUE: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID_VALUE: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          set -euo pipefail
-          fingerprint() {
-            local label="$1"
-            local value="$2"
-            local suffix="${value: -6}"
-            local hash
-            hash=$(printf '%s' "$value" | sha256sum | cut -d ' ' -f1)
-            echo "$label length: ${#value}"
-            echo "$label suffix: $suffix"
-            echo "$label sha256: $hash"
-          }
-
-          fingerprint "AZURE_CLIENT_ID" "$AZURE_CLIENT_ID_VALUE"
-          fingerprint "AZURE_TENANT_ID" "$AZURE_TENANT_ID_VALUE"
-          fingerprint "AZURE_SUBSCRIPTION_ID" "$AZURE_SUBSCRIPTION_ID_VALUE"
 
       - name: Azure login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Preflight Azure subscription and RBAC access
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-
-            TARGET_SUBSCRIPTION="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-            TARGET_TENANT="${{ secrets.AZURE_TENANT_ID }}"
-            TARGET_CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
-
-            echo "Checking Azure access for configured tenant and subscription..."
-            CURRENT_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null || true)
-            if [ -n "$CURRENT_TENANT" ] && [ "$CURRENT_TENANT" != "$TARGET_TENANT" ]; then
-              echo "::warning::Logged in tenant differs from configured tenant secret. loggedInTenant=$CURRENT_TENANT configuredTenant=$TARGET_TENANT"
-            fi
-
-            if ! az account set --subscription "$TARGET_SUBSCRIPTION" 2>/tmp/az-account-set.err; then
-              echo "::error::Configured service principal cannot access subscription '$TARGET_SUBSCRIPTION'."
-              echo "::error::Ensure AZURE_SUBSCRIPTION_ID is correct and assign this app at subscription scope: Contributor + User Access Administrator."
-              cat /tmp/az-account-set.err
-              exit 1
-            fi
-
-            echo "Active subscription context:"
-            az account show --query "{subscriptionId:id,subscriptionName:name,tenantId:tenantId,user:user.name}" -o table
-
-            AUTH_PRINCIPAL=$(az account show --query user.name -o tsv 2>/dev/null || true)
-            if [ -n "$AUTH_PRINCIPAL" ]; then
-              AUTH_SUFFIX="${AUTH_PRINCIPAL: -6}"
-              AUTH_HASH=$(printf '%s' "$AUTH_PRINCIPAL" | sha256sum | cut -d ' ' -f1)
-              echo "Authenticated principal suffix: $AUTH_SUFFIX"
-              echo "Authenticated principal sha256: $AUTH_HASH"
-            fi
-
-            if ! az group list --query "[].name" -o tsv >/dev/null 2>/tmp/az-group-list.err; then
-              echo "::error::Management-plane access check failed for subscription '$TARGET_SUBSCRIPTION'."
-              echo "::error::Grant at least Contributor role to app '$TARGET_CLIENT_ID' on /subscriptions/$TARGET_SUBSCRIPTION."
-              echo "az group list error details:"
-              cat /tmp/az-group-list.err
-              if [ -n "$AUTH_PRINCIPAL" ]; then
-                echo "Role assignments found for authenticated principal at subscription scope:"
-                az role assignment list \
-                  --assignee "$AUTH_PRINCIPAL" \
-                  --scope "/subscriptions/$TARGET_SUBSCRIPTION" \
-                  --query "[].roleDefinitionName" -o table || true
-              fi
-              exit 1
-            fi
-
-            ASSIGNMENT_COUNT=$(az role assignment list \
-              --assignee "$TARGET_CLIENT_ID" \
-              --scope "/subscriptions/$TARGET_SUBSCRIPTION" \
-              --query "length([])" -o tsv 2>/dev/null || echo "0")
-
-            if [ "$ASSIGNMENT_COUNT" = "0" ]; then
-              echo "::warning::No role assignments were found for app '$TARGET_CLIENT_ID' at subscription scope."
-              echo "::warning::Deployment may fail unless access is inherited from a management group."
-            fi
-
-            echo "Azure access preflight passed."
-
-      - name: Debug resolved Azure account context
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            az account show --query "{subscriptionId:id,subscriptionName:name,tenantId:tenantId,user:user.name}" -o table
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy infrastructure
         id: infra
@@ -136,29 +44,8 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
-            echo "Purging soft-deleted Key Vaults for environment '$DEPLOY_ENVIRONMENT' (if any)..."
-            DELETED_KV_ROWS=$(az keyvault list-deleted \
-              --query "[?contains(name, 'kv-${DEPLOY_ENVIRONMENT}-')].[name, properties.location]" -o tsv 2>/dev/null || true)
 
-            if [ -n "$DELETED_KV_ROWS" ]; then
-              while IFS=$'\t' read -r KV_NAME KV_LOCATION; do
-                [ -z "$KV_NAME" ] && continue
-                echo "Purging soft-deleted Key Vault: $KV_NAME (location=$KV_LOCATION)"
-                if [ -n "$KV_LOCATION" ]; then
-                  if ! az keyvault purge --name "$KV_NAME" --location "$KV_LOCATION"; then
-                    echo "Purge failed for $KV_NAME, attempting recovery instead..."
-                    az keyvault recover --name "$KV_NAME" || true
-                  fi
-                else
-                  echo "Skipping purge for $KV_NAME because location metadata is missing"
-                fi
-              done <<< "$DELETED_KV_ROWS"
-            else
-              echo "No matching soft-deleted Key Vaults found."
-            fi
-
-            # If the resource group is mid-delete from a previous run, wait it out
-            # before trying to (re)create. Otherwise az group create races and fails.
+            # If a previous run left the RG mid-delete, wait it out before re-creating.
             for i in $(seq 1 60); do
               RG_STATE=$(az group show --name "$AZURE_RESOURCE_GROUP" --query properties.provisioningState -o tsv 2>/dev/null || echo "NotFound")
               if [ "$RG_STATE" != "Deleting" ]; then
@@ -170,32 +57,27 @@ jobs:
             done
 
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
+
             az deployment group create \
               --name "$DEPLOYMENT_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --template-file infra/main.bicep \
-              --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam \
-              --parameters backendImageTag="$BACKEND_IMAGE_TAG"
-
-            ACR_LOGIN_SERVER=$(az deployment group show \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$DEPLOYMENT_NAME" \
-              --query properties.outputs.acrLoginServer.value -o tsv)
-
-            ACR_NAME=$(az deployment group show \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$DEPLOYMENT_NAME" \
-              --query properties.outputs.acrName.value -o tsv)
-
-            BACKEND_APP_NAME=$(az deployment group show \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$DEPLOYMENT_NAME" \
-              --query properties.outputs.backendAppName.value -o tsv)
+              --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam
 
             STATIC_WEB_APP_NAME=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --name "$DEPLOYMENT_NAME" \
               --query properties.outputs.staticSiteNameOut.value -o tsv)
+
+            BACKEND_FQDN=$(az deployment group show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$DEPLOYMENT_NAME" \
+              --query properties.outputs.backendAppFqdn.value -o tsv)
+
+            SWA_HOST=$(az deployment group show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$DEPLOYMENT_NAME" \
+              --query properties.outputs.staticSiteDefaultHostname.value -o tsv)
 
             az config set extension.use_dynamic_install=yes_without_prompt
             SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list \
@@ -204,33 +86,10 @@ jobs:
               --query properties.apiKey -o tsv)
             echo "::add-mask::$SWA_DEPLOYMENT_TOKEN"
 
-            echo "acr_login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
-            echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
-            echo "backend_app_name=$BACKEND_APP_NAME" >> "$GITHUB_OUTPUT"
             echo "static_web_app_name=$STATIC_WEB_APP_NAME" >> "$GITHUB_OUTPUT"
             echo "swa_deployment_token=$SWA_DEPLOYMENT_TOKEN" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push backend image
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            IMAGE_NAME="${{ steps.infra.outputs.acr_login_server }}/${BACKEND_IMAGE_NAME}:${BACKEND_IMAGE_TAG}"
-            az acr build \
-              --registry "${{ steps.infra.outputs.acr_name }}" \
-              --image "$IMAGE_NAME" \
-              --file backend/Dockerfile backend
-
-      - name: Update backend container app image
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            IMAGE_NAME="${{ steps.infra.outputs.acr_login_server }}/${BACKEND_IMAGE_NAME}:${BACKEND_IMAGE_TAG}"
-            az containerapp update \
-              --name "${{ steps.infra.outputs.backend_app_name }}" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --image "$IMAGE_NAME"
+            echo "Backend FQDN:  https://$BACKEND_FQDN"
+            echo "Frontend host: https://$SWA_HOST"
 
       - name: Deploy frontend to Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
