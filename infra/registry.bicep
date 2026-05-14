@@ -28,16 +28,21 @@ resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   location: location
 }
 
-// AcrPull role definition id — well-known constant.
-var acrPullRoleDefinitionId = '7f951dda-4ed3-11e8-bbf0-0a580a020228'
+// AcrPull built-in role. Reference it as an existing resource so the
+// role-definition path is built by ARM itself — avoids the brittle
+// subscriptionResourceId() approach that produced RoleDefinitionDoesNotExist.
+resource acrPullRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  name: '7f951dda-4ed3-11e8-bbf0-0a580a020228'
+}
 
 resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: acr
-  name: guid(acr.id, uami.id, acrPullRoleDefinitionId)
+  name: guid(acr.id, uami.id, acrPullRoleDefinition.id)
   properties: {
     principalId: uami.properties.principalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleDefinitionId)
+    roleDefinitionId: acrPullRoleDefinition.id
   }
 }
 
