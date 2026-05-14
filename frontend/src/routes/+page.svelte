@@ -80,7 +80,7 @@
     <article class="card accent">
       <h2>Deployment shape</h2>
       <ul>
-        <li>One dev and one prod environment</li>
+        <li>One dev (test) and one prod environment</li>
         <li>Managed identity and Key Vault from day one</li>
         <li>GitHub Actions for infra and app delivery</li>
       </ul>
