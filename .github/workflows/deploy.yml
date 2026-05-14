@@ -141,7 +141,7 @@ jobs:
               --name "$DEPLOYMENT_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --template-file infra/main.bicep \
-              --parameters @infra/${DEPLOY_ENVIRONMENT}.bicepparam \
+              --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam \
               --parameters backendImageTag="$BACKEND_IMAGE_TAG"
 
             ACR_LOGIN_SERVER=$(az deployment group show \
