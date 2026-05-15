@@ -24,12 +24,6 @@ param cosmosDatabaseName string = 'rag'
 @description('Collection name for indexed RAG documents.')
 param cosmosCollectionName string = 'documents'
 
-@description('Cosmos DB account kind. GlobalDocumentDB supports Mongo API.')
-@allowed([
-  'GlobalDocumentDB'
-])
-param cosmosDatabaseAccountKind string = 'GlobalDocumentDB'
-
 var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0, 6)
 var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containerAppsLocation)}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
@@ -59,7 +53,7 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
   name: cosmosAccountName
   location: containerAppsLocation
-  kind: cosmosDatabaseAccountKind
+  kind: 'MongoDB'
   properties: {
     databaseAccountOfferType: 'Standard'
     locations: [
@@ -71,11 +65,9 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
-    capabilities: [
-      {
-        name: 'EnableMongo'
-      }
-    ]
+    apiProperties: {
+      serverVersion: '6.0'
+    }
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false
   }
