@@ -24,6 +24,9 @@ param cosmosDatabaseName string = 'rag'
 @description('Collection name for indexed RAG documents.')
 param cosmosCollectionName string = 'documents'
 
+@description('Key Vault secret name for the Cosmos DB connection string used by the backend.')
+param cosmosConnectionSecretName string = 'cosmos-connection-string'
+
 var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0, 6)
 var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containerAppsLocation)}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
@@ -119,6 +122,14 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+resource cosmosConnectionSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: cosmosConnectionSecretName
+  properties: {
+    value: cosmosAccount.listConnectionStrings().connectionStrings[0].connectionString
+  }
+}
+
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: backendAppName
   location: containerAppsLocation
@@ -181,3 +192,4 @@ output cosmosAccountNameOut string = cosmosAccount.name
 output cosmosDatabaseNameOut string = cosmosDatabase.name
 output cosmosCollectionNameOut string = cosmosCollection.name
 output keyVaultNameOut string = keyVault.name
+output cosmosConnectionSecretNameOut string = cosmosConnectionSecretName
