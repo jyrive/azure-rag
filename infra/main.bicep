@@ -175,6 +175,16 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'backend'
           image: backendImage
+          env: [
+            {
+              name: 'KEY_VAULT_URL'
+              value: 'https://${keyVault.name}${environment().suffixes.keyvaultDns}/'
+            }
+            {
+              name: 'KEYVAULT_COSMOS_SECRET_NAME'
+              value: cosmosConnectionSecretName
+            }
+          ]
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
