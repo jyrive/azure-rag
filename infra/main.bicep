@@ -184,6 +184,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'KEYVAULT_COSMOS_SECRET_NAME'
               value: cosmosConnectionSecretName
             }
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: uami.properties.clientId
+            }
           ]
           resources: {
             cpu: json('0.25')
