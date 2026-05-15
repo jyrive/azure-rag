@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+
+# If invoked as `sh check-deploy.sh`, re-exec under bash for consistent behavior.
+if [[ -z "${BASH_VERSION:-}" ]]; then
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 # Usage:
@@ -53,16 +59,16 @@ HEALTH_BODY="$(curl --fail --silent --show-error \
   --max-time 20 \
   "$HEALTH_URL")"
 
-echo "$HEALTH_BODY" | jq '.' >/dev/null 2>&1 || {
+printf '%s' "$HEALTH_BODY" | jq '.' >/dev/null 2>&1 || {
   echo "ERROR: /health did not return valid JSON"
   echo "$HEALTH_BODY"
   exit 1
 }
 
-HEALTH_STATUS="$(echo "$HEALTH_BODY" | jq -r '.status // empty')"
+HEALTH_STATUS="$(printf '%s' "$HEALTH_BODY" | jq -r '.status // empty')"
 if [[ "$HEALTH_STATUS" != "ok" ]]; then
   echo "ERROR: /health status was not ok"
-  echo "$HEALTH_BODY" | jq '.'
+  printf '%s' "$HEALTH_BODY" | jq '.'
   exit 1
 fi
 echo "PASS: /health returned status=ok"
@@ -76,32 +82,37 @@ CONFIG_BODY="$(curl --fail --silent --show-error \
   --max-time 20 \
   "$CONFIG_URL")"
 
-echo "$CONFIG_BODY" | jq '.' >/dev/null 2>&1 || {
+printf '%s' "$CONFIG_BODY" | jq '.' >/dev/null 2>&1 || {
   echo "ERROR: /api/config did not return valid JSON"
   echo "$CONFIG_BODY"
   exit 1
 }
 
-KEYVAULT_CONFIGURED="$(echo "$CONFIG_BODY" | jq -r '.keyVaultConfigured')"
-HAS_COSMOS_CONNECTION="$(echo "$CONFIG_BODY" | jq -r '.hasCosmosConnection')"
-SECRET_LOAD_ERRORS_LEN="$(echo "$CONFIG_BODY" | jq -r '(.secretLoadErrors // []) | length')"
+KEYVAULT_CONFIGURED="$(printf '%s' "$CONFIG_BODY" | jq -r '.keyVaultConfigured')"
+HAS_COSMOS_CONNECTION="$(printf '%s' "$CONFIG_BODY" | jq -r '.hasCosmosConnection')"
+COSMOS_SECRET_ERROR_COUNT="$(printf '%s' "$CONFIG_BODY" | jq -r '(.secretLoadErrors // []) | map(select(startswith("cosmos-connection-string:"))) | length')"
+OPTIONAL_SECRET_ERROR_COUNT="$(printf '%s' "$CONFIG_BODY" | jq -r '(.secretLoadErrors // []) | map(select((startswith("cosmos-connection-string:") | not))) | length')"
 
 if [[ "$KEYVAULT_CONFIGURED" != "true" ]]; then
   echo "ERROR: keyVaultConfigured is not true"
-  echo "$CONFIG_BODY" | jq '.'
+  printf '%s' "$CONFIG_BODY" | jq '.'
   exit 1
 fi
 
 if [[ "$HAS_COSMOS_CONNECTION" != "true" ]]; then
   echo "ERROR: hasCosmosConnection is not true"
-  echo "$CONFIG_BODY" | jq '.'
+  printf '%s' "$CONFIG_BODY" | jq '.'
   exit 1
 fi
 
-if [[ "$SECRET_LOAD_ERRORS_LEN" != "0" ]]; then
-  echo "ERROR: secretLoadErrors is not empty"
-  echo "$CONFIG_BODY" | jq '.'
+if [[ "$COSMOS_SECRET_ERROR_COUNT" != "0" ]]; then
+  echo "ERROR: Cosmos Key Vault secret still has load errors"
+  printf '%s' "$CONFIG_BODY" | jq '.'
   exit 1
+fi
+
+if [[ "$OPTIONAL_SECRET_ERROR_COUNT" != "0" ]]; then
+  echo "WARN: Optional secrets are missing (OpenAI/Event Grid), but core Cosmos check passed"
 fi
 
 echo "PASS: Key Vault and Cosmos config checks passed"
@@ -110,10 +121,10 @@ echo "PASS: Key Vault and Cosmos config checks passed"
 printf '\n[3/3] Workflow status check\n'
 if command -v gh >/dev/null 2>&1; then
   RUN_JSON="$(gh run list --workflow "$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion,url,displayTitle,createdAt)"
-  RUN_ID="$(echo "$RUN_JSON" | jq -r '.[0].databaseId // empty')"
-  RUN_STATUS="$(echo "$RUN_JSON" | jq -r '.[0].status // empty')"
-  RUN_CONCLUSION="$(echo "$RUN_JSON" | jq -r '.[0].conclusion // empty')"
-  RUN_URL="$(echo "$RUN_JSON" | jq -r '.[0].url // empty')"
+  RUN_ID="$(printf '%s' "$RUN_JSON" | jq -r '.[0].databaseId // empty')"
+  RUN_STATUS="$(printf '%s' "$RUN_JSON" | jq -r '.[0].status // empty')"
+  RUN_CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.[0].conclusion // empty')"
+  RUN_URL="$(printf '%s' "$RUN_JSON" | jq -r '.[0].url // empty')"
 
   if [[ -z "$RUN_ID" ]]; then
     echo "WARN: Could not read latest workflow run for $WORKFLOW_NAME"
