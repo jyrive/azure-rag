@@ -107,6 +107,61 @@ Create GitHub Environments named `dev` and `prod`, then set these secrets in eac
 
 The deployment workflow selects `dev` or `prod` and deploys infrastructure plus backend and frontend artifacts to that instance.
 
+## Cosmos DB serverless migration
+
+Cosmos DB Mongo API cannot switch an existing account from provisioned throughput to serverless in place.
+This repo now deploys a new serverless account name and keeps the old account until you copy data and validate.
+
+### 1) Deploy infra update
+
+Push to `main` (or run workflow dispatch) so `infra/main.bicep` creates the new serverless Cosmos account.
+
+### 2) Copy data from old account to new account
+
+Install backend dependencies locally first (includes `pymongo`):
+
+```bash
+cd backend
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cd ..
+```
+
+Run migration helper:
+
+```bash
+scripts/migrate-cosmos-serverless.sh dev
+```
+
+If auto-detection of the old account fails:
+
+```bash
+scripts/migrate-cosmos-serverless.sh dev <oldAccountName> <newServerlessAccountName>
+```
+
+### 3) Validate app-level read/write
+
+```bash
+scripts/check-deploy.sh dev
+```
+
+This confirms health, Key Vault secret resolution, and Cosmos round-trip behavior against the new connection string.
+
+### 4) Remove old provisioned account after validation
+
+List Mongo accounts:
+
+```bash
+az cosmosdb list -g rg-azure-rag-dev --query "[?kind=='MongoDB'].name" -o tsv
+```
+
+Delete the old provisioned account only after successful validation:
+
+```bash
+az cosmosdb delete -g rg-azure-rag-dev -n <oldProvisionedAccountName> --yes
+```
+
 ### SWA linked backend and auth
 
 - `frontendSkuName` defaults to `Standard` in Bicep to support SWA linked backends.

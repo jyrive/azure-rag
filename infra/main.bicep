@@ -31,7 +31,9 @@ var shortSuffix = substring(uniqueString(resourceGroup().id, environmentName), 0
 var containerEnvName = 'aca-${environmentName}-${shortSuffix}-${toLower(containerAppsLocation)}'
 var backendAppName = 'api-${environmentName}-${shortSuffix}'
 var staticSiteName = toLower('swa${environmentName}${shortSuffix}')
-var cosmosAccountName = toLower('cos${environmentName}${shortSuffix}')
+// Use a distinct account name for serverless because provisioned -> serverless
+// is not an in-place update in Cosmos DB.
+var cosmosAccountName = toLower('cos${environmentName}${shortSuffix}sls')
 var keyVaultName = toLower('kv-${environmentName}-${shortSuffix}')
 
 // Registry + identity are provisioned separately by registry.bicep using the same
@@ -59,6 +61,11 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
   kind: 'MongoDB'
   properties: {
     databaseAccountOfferType: 'Standard'
+    capabilities: [
+      {
+        name: 'EnableServerless'
+      }
+    ]
     locations: [
       {
         locationName: containerAppsLocation
