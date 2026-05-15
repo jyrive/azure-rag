@@ -16,6 +16,9 @@ ENVIRONMENT="${1:-dev}"
 WORKFLOW_NAME="Deploy Azure RAG"
 AZURE_RESOURCE_GROUP="rg-azure-rag-${ENVIRONMENT}"
 DEPLOYMENT_NAME="azure-rag-${ENVIRONMENT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SKIP_WORKFLOW_STATUS="${SKIP_WORKFLOW_STATUS:-0}"
 
 require_cmd() {
   local cmd="$1"
@@ -28,6 +31,28 @@ require_cmd() {
 require_cmd az
 require_cmd curl
 require_cmd jq
+
+resolve_python() {
+  if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+    echo "$REPO_ROOT/.venv/bin/python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  echo "ERROR: Python runtime not found. Expected $REPO_ROOT/.venv/bin/python or python3 on PATH."
+  exit 1
+}
+
+PYTHON_BIN="$(resolve_python)"
+
+"$PYTHON_BIN" -c 'import pymongo' >/dev/null 2>&1 || {
+  echo "ERROR: pymongo is not available in $PYTHON_BIN"
+  exit 1
+}
 
 # 1) Resolve backend URL from deployment outputs.
 BACKEND_FQDN="$(az deployment group show \
@@ -51,7 +76,7 @@ echo "Checking environment: $ENVIRONMENT"
 echo "Backend URL: $BACKEND_URL"
 
 # 2) Health check.
-printf '\n[1/3] Health check\n'
+printf '\n[1/4] Health check\n'
 HEALTH_BODY="$(curl --fail --silent --show-error \
   --retry 8 \
   --retry-all-errors \
@@ -74,7 +99,7 @@ fi
 echo "PASS: /health returned status=ok"
 
 # 3) Config checks.
-printf '\n[2/3] Config check\n'
+printf '\n[2/4] Config check\n'
 CONFIG_BODY="$(curl --fail --silent --show-error \
   --retry 5 \
   --retry-all-errors \
@@ -117,9 +142,113 @@ fi
 
 echo "PASS: Key Vault and Cosmos config checks passed"
 
-# 4) Latest workflow status (optional, if gh is available).
-printf '\n[3/3] Workflow status check\n'
-if command -v gh >/dev/null 2>&1; then
+# 4) Cosmos DB round-trip validation.
+printf '\n[3/4] Cosmos round-trip check\n'
+COSMOS_ACCOUNT_NAME="$(az deployment group show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name "$DEPLOYMENT_NAME" \
+  --query properties.outputs.cosmosAccountNameOut.value \
+  -o tsv)"
+
+COSMOS_DATABASE_NAME="$(az deployment group show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name "$DEPLOYMENT_NAME" \
+  --query properties.outputs.cosmosDatabaseNameOut.value \
+  -o tsv)"
+
+COSMOS_COLLECTION_NAME="$(az deployment group show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name "$DEPLOYMENT_NAME" \
+  --query properties.outputs.cosmosCollectionNameOut.value \
+  -o tsv)"
+
+COSMOS_CONNECTION_STRING="$(az cosmosdb keys list \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name "$COSMOS_ACCOUNT_NAME" \
+  --type connection-strings \
+  --query 'connectionStrings[0].connectionString' \
+  -o tsv)"
+
+if [[ -z "$COSMOS_ACCOUNT_NAME" || "$COSMOS_ACCOUNT_NAME" == "null" ]]; then
+  echo "ERROR: Could not resolve Cosmos account name from deployment outputs."
+  exit 1
+fi
+
+if [[ -z "$COSMOS_DATABASE_NAME" || "$COSMOS_DATABASE_NAME" == "null" ]]; then
+  echo "ERROR: Could not resolve Cosmos database name from deployment outputs."
+  exit 1
+fi
+
+if [[ -z "$COSMOS_COLLECTION_NAME" || "$COSMOS_COLLECTION_NAME" == "null" ]]; then
+  echo "ERROR: Could not resolve Cosmos collection name from deployment outputs."
+  exit 1
+fi
+
+if [[ -z "$COSMOS_CONNECTION_STRING" || "$COSMOS_CONNECTION_STRING" == "null" ]]; then
+  echo "ERROR: Could not resolve Cosmos connection string from account keys."
+  exit 1
+fi
+
+COSMOS_RESULT="$(COSMOS_CONN_STR="$COSMOS_CONNECTION_STRING" \
+  COSMOS_DB_NAME="$COSMOS_DATABASE_NAME" \
+  COSMOS_COL_NAME="$COSMOS_COLLECTION_NAME" \
+  "$PYTHON_BIN" - <<'PY'
+import os
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from pymongo import MongoClient
+
+connection_string = os.environ["COSMOS_CONN_STR"]
+database_name = os.environ["COSMOS_DB_NAME"]
+collection_name = os.environ["COSMOS_COL_NAME"]
+
+document_id = f"tier2-validate-{uuid4()}"
+payload = {
+    "_id": document_id,
+    "text": "tier2 validation document",
+    "metadata": {"source": "check-deploy", "company_id": "validation"},
+    "createdAt": datetime.now(timezone.utc).isoformat(),
+}
+
+client = MongoClient(connection_string, serverSelectionTimeoutMS=30000)
+collection = client[database_name][collection_name]
+
+insert_result = collection.insert_one(payload)
+found = collection.find_one({"_id": document_id}, {"_id": 1})
+delete_result = collection.delete_one({"_id": document_id})
+
+print(f"INSERTED_ID={insert_result.inserted_id}")
+print(f"READ_BACK={'yes' if found else 'no'}")
+print(f"DELETED_COUNT={delete_result.deleted_count}")
+print(f"DB={database_name}")
+print(f"COLLECTION={collection_name}")
+PY
+)"
+
+READ_BACK="$(printf '%s\n' "$COSMOS_RESULT" | awk -F= '/^READ_BACK=/{print $2}')"
+DELETED_COUNT="$(printf '%s\n' "$COSMOS_RESULT" | awk -F= '/^DELETED_COUNT=/{print $2}')"
+
+if [[ "$READ_BACK" != "yes" ]]; then
+  echo "ERROR: Cosmos round-trip read-back failed"
+  printf '%s\n' "$COSMOS_RESULT"
+  exit 1
+fi
+
+if [[ "$DELETED_COUNT" != "1" ]]; then
+  echo "ERROR: Cosmos round-trip cleanup failed"
+  printf '%s\n' "$COSMOS_RESULT"
+  exit 1
+fi
+
+echo "PASS: Cosmos round-trip succeeded"
+printf '%s\n' "$COSMOS_RESULT"
+
+# 5) Latest workflow status (optional, if gh is available).
+printf '\n[4/4] Workflow status check\n'
+if [[ "$SKIP_WORKFLOW_STATUS" == "1" ]]; then
+  echo "SKIP: Workflow status check disabled"
+elif command -v gh >/dev/null 2>&1; then
   RUN_JSON="$(gh run list --workflow "$WORKFLOW_NAME" --limit 1 --json databaseId,status,conclusion,url,displayTitle,createdAt)"
   RUN_ID="$(printf '%s' "$RUN_JSON" | jq -r '.[0].databaseId // empty')"
   RUN_STATUS="$(printf '%s' "$RUN_JSON" | jq -r '.[0].status // empty')"

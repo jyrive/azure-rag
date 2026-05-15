@@ -97,9 +97,7 @@ resource cosmosCollection 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabase
         _id: 'Hash'
       }
     }
-    options: {
-      throughput: 400
-    }
+    options: {}
   }
 }
 

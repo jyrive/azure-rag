@@ -174,3 +174,22 @@ jobs:
           app_location: frontend
           output_location: build
           app_build_command: npm install && npm run build
+
+      - name: Set up Python for smoke test
+        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install smoke test dependencies
+        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pymongo
+
+      - name: Run post-deploy smoke test
+        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        env:
+          SKIP_WORKFLOW_STATUS: '1'
+        run: sh scripts/check-deploy.sh "$DEPLOY_ENVIRONMENT"
