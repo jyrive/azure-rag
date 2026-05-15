@@ -56,6 +56,40 @@ jobs:
           inlineScript: |
             set -euo pipefail
 
+            cancel_active_deployment() {
+              local dep_name="$1"
+              local state
+
+              state=$(az deployment group show \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --name "$dep_name" \
+                --query properties.provisioningState \
+                -o tsv 2>/dev/null || echo "NotFound")
+
+              if [ "$state" = "Accepted" ] || [ "$state" = "Running" ]; then
+                echo "Deployment $dep_name is active ($state). Canceling to avoid DeploymentActive conflicts..."
+                az deployment group cancel \
+                  --resource-group "$AZURE_RESOURCE_GROUP" \
+                  --name "$dep_name"
+
+                for i in $(seq 1 30); do
+                  state=$(az deployment group show \
+                    --resource-group "$AZURE_RESOURCE_GROUP" \
+                    --name "$dep_name" \
+                    --query properties.provisioningState \
+                    -o tsv 2>/dev/null || echo "NotFound")
+
+                  if [ "$state" != "Accepted" ] && [ "$state" != "Running" ]; then
+                    echo "Deployment $dep_name state after cancel: $state"
+                    break
+                  fi
+
+                  echo "Waiting for deployment cancel to complete (attempt $i/30)..."
+                  sleep 5
+                done
+              fi
+            }
+
             # If a previous run left the RG mid-delete, wait it out before re-creating.
             for i in $(seq 1 60); do
               RG_STATE=$(az group show --name "$AZURE_RESOURCE_GROUP" --query properties.provisioningState -o tsv 2>/dev/null || echo "NotFound")
@@ -68,6 +102,8 @@ jobs:
             done
 
             az group create --name "$AZURE_RESOURCE_GROUP" --location westeurope
+
+            cancel_active_deployment "$REGISTRY_DEPLOYMENT_NAME"
 
             az deployment group create \
               --name "$REGISTRY_DEPLOYMENT_NAME" \
@@ -111,6 +147,35 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
+
+            DEP_STATE=$(az deployment group show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$DEPLOYMENT_NAME" \
+              --query properties.provisioningState \
+              -o tsv 2>/dev/null || echo "NotFound")
+
+            if [ "$DEP_STATE" = "Accepted" ] || [ "$DEP_STATE" = "Running" ]; then
+              echo "Deployment $DEPLOYMENT_NAME is active ($DEP_STATE). Canceling to avoid DeploymentActive conflicts..."
+              az deployment group cancel \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --name "$DEPLOYMENT_NAME"
+
+              for i in $(seq 1 30); do
+                DEP_STATE=$(az deployment group show \
+                  --resource-group "$AZURE_RESOURCE_GROUP" \
+                  --name "$DEPLOYMENT_NAME" \
+                  --query properties.provisioningState \
+                  -o tsv 2>/dev/null || echo "NotFound")
+
+                if [ "$DEP_STATE" != "Accepted" ] && [ "$DEP_STATE" != "Running" ]; then
+                  echo "Deployment $DEPLOYMENT_NAME state after cancel: $DEP_STATE"
+                  break
+                fi
+
+                echo "Waiting for deployment cancel to complete (attempt $i/30)..."
+                sleep 5
+              done
+            fi
 
             az deployment group create \
               --name "$DEPLOYMENT_NAME" \
