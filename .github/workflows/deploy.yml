@@ -148,6 +148,18 @@ jobs:
             echo "Backend FQDN:  https://$BACKEND_FQDN"
             echo "Frontend host: https://$SWA_HOST"
 
+      - name: Smoke test backend health
+        run: |
+          set -euo pipefail
+          HEALTH_URL="https://${{ steps.infra.outputs.backend_fqdn }}/health"
+          echo "Checking backend health at: $HEALTH_URL"
+          curl --fail --silent --show-error \
+            --retry 8 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --max-time 20 \
+            "$HEALTH_URL"
+
       - name: Deploy frontend to Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         env:
