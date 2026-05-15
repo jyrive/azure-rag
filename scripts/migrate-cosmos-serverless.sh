@@ -13,6 +13,8 @@ OLD_ACCOUNT_NAME="${2:-}"
 NEW_ACCOUNT_NAME="${3:-}"
 RG="rg-azure-rag-${ENVIRONMENT}"
 DEPLOYMENT_NAME="azure-rag-${ENVIRONMENT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 require_cmd() {
   local cmd="$1"
@@ -23,7 +25,23 @@ require_cmd() {
 }
 
 require_cmd az
-require_cmd python3
+
+resolve_python() {
+  if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
+    echo "$REPO_ROOT/.venv/bin/python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  echo "ERROR: Python runtime not found. Expected $REPO_ROOT/.venv/bin/python or python3 on PATH."
+  exit 1
+}
+
+PYTHON_BIN="$(resolve_python)"
 
 echo "Environment: $ENVIRONMENT"
 echo "Resource group: $RG"
@@ -49,9 +67,10 @@ if [[ -z "$NEW_ACCOUNT_NAME" || "$NEW_ACCOUNT_NAME" == "null" ]]; then
 fi
 
 if [[ -z "$OLD_ACCOUNT_NAME" ]]; then
-  mapfile -t CANDIDATES < <(
-    az cosmosdb list -g "$RG" --query "[?kind=='MongoDB' && name!='${NEW_ACCOUNT_NAME}'].name" -o tsv
-  )
+  CANDIDATES=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && CANDIDATES+=("$line")
+  done < <(az cosmosdb list -g "$RG" --query "[?kind=='MongoDB' && name!='${NEW_ACCOUNT_NAME}'].name" -o tsv)
 
   if [[ ${#CANDIDATES[@]} -eq 1 ]]; then
     OLD_ACCOUNT_NAME="${CANDIDATES[0]}"
@@ -91,7 +110,7 @@ OLD_CONN_STR="$OLD_CONN_STR" \
 NEW_CONN_STR="$NEW_CONN_STR" \
 COSMOS_DB_NAME="$COSMOS_DB_NAME" \
 COSMOS_COL_NAME="$COSMOS_COL_NAME" \
-python3 - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 import os
 import sys
 from pymongo import MongoClient, UpdateOne
