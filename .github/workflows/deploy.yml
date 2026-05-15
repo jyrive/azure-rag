@@ -192,4 +192,4 @@ jobs:
         if: env.DEPLOY_ENVIRONMENT == 'dev'
         env:
           SKIP_WORKFLOW_STATUS: '1'
-        run: sh scripts/check-deploy.sh "$DEPLOY_ENVIRONMENT"
+        run: bash scripts/check-deploy.sh "$DEPLOY_ENVIRONMENT"
