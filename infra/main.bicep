@@ -9,8 +9,9 @@ param location string = 'westeurope'
 @description('Region for the Container Apps managed environment. westeurope has been capacity-constrained for AKS-backed managed envs; northeurope is reliable.')
 param containerAppsLocation string = 'northeurope'
 
-@description('SKU for the Static Web App. Free is fine for dev.')
-param frontendSkuName string = 'Free'
+@description('SKU for the Static Web App. Bring-your-own API backends require Standard.')
+@allowed(['Free', 'Standard'])
+param frontendSkuName string = 'Standard'
 
 @description('Fully-qualified container image for the backend. The workflow passes the ACR-built tag here.')
 param backendImage string
@@ -216,6 +217,16 @@ resource staticSite 'Microsoft.Web/staticSites@2023-12-01' = {
     tier: frontendSkuName
   }
   properties: {}
+}
+
+resource staticSiteLinkedBackend 'Microsoft.Web/staticSites/linkedBackends@2025-03-01' = {
+  parent: staticSite
+  name: backendAppName
+  kind: 'containerapp'
+  properties: {
+    backendResourceId: backendApp.id
+    region: containerAppsLocation
+  }
 }
 
 output backendAppFqdn string = backendApp.properties.configuration.ingress.fqdn
