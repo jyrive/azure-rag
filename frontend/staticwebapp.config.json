@@ -1,9 +1,4 @@
 {
-  "auth": {
-    "identityProviders": {
-      "azureActiveDirectory": {}
-    }
-  },
   "routes": [
     {
       "route": "/api/*",
