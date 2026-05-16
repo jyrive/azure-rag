@@ -33,29 +33,29 @@ on:
         description: Backend deployment selection
         type: choice
         required: true
-        default: auto
+        default: 'auto'
         options:
-          - auto
-          - on
-          - off
+          - 'auto'
+          - 'on'
+          - 'off'
       deploy_frontend:
         description: Frontend deployment selection
         type: choice
         required: true
-        default: auto
+        default: 'auto'
         options:
-          - auto
-          - on
-          - off
+          - 'auto'
+          - 'on'
+          - 'off'
       deploy_infra:
         description: Infrastructure deployment selection
         type: choice
         required: true
-        default: auto
+        default: 'auto'
         options:
-          - auto
-          - on
-          - off
+          - 'auto'
+          - 'on'
+          - 'off'
 
 permissions:
   id-token: write
@@ -166,18 +166,18 @@ jobs:
             else
               # For manual runs, auto defaults to on for reliability unless explicitly turned off.
               case "$INPUT_DEPLOY_BACKEND" in
-                on|auto) deploy_backend="true" ;;
-                off) deploy_backend="false" ;;
+                on|true|auto) deploy_backend="true" ;;
+                off|false) deploy_backend="false" ;;
                 *) echo "ERROR: Invalid deploy_backend value: $INPUT_DEPLOY_BACKEND"; exit 1 ;;
               esac
               case "$INPUT_DEPLOY_FRONTEND" in
-                on|auto) deploy_frontend="true" ;;
-                off) deploy_frontend="false" ;;
+                on|true|auto) deploy_frontend="true" ;;
+                off|false) deploy_frontend="false" ;;
                 *) echo "ERROR: Invalid deploy_frontend value: $INPUT_DEPLOY_FRONTEND"; exit 1 ;;
               esac
               case "$INPUT_DEPLOY_INFRA" in
-                on|auto) deploy_infra="true" ;;
-                off) deploy_infra="false" ;;
+                on|true|auto) deploy_infra="true" ;;
+                off|false) deploy_infra="false" ;;
                 *) echo "ERROR: Invalid deploy_infra value: $INPUT_DEPLOY_INFRA"; exit 1 ;;
               esac
               selection_reason="manual-smart"
