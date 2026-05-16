@@ -48,6 +48,13 @@ Success criteria:
 ## Tier 3+ — Features (decide later)
 Candidates, in no particular order: Azure OpenAI, Event Grid, Application Insights, custom domains, auth. Each is its own commit on top of a green Tier 2.
 
+### Auth decision (locked for now)
+- Keep Azure Static Web Apps built-in auth with Microsoft Entra ID.
+- Keep backend principal parsing via `X-MS-CLIENT-PRINCIPAL`.
+- Use Microsoft Entra MFA (Authenticator OTP challenge) for login security.
+- Do **not** implement a custom in-app OTP modal or custom auth backend at this stage.
+- Revisit only if we later need non-SWA hosting portability or consumer identity flows.
+
 ---
 
 ## Out of scope for now

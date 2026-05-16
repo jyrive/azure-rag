@@ -167,3 +167,36 @@ az cosmosdb delete -g rg-azure-rag-dev -n <oldProvisionedAccountName> --yes
 - `frontendSkuName` defaults to `Standard` in Bicep to support SWA linked backends.
 - SWA is linked to the API Container App resource so frontend requests can use `/api/*` on one domain.
 - `frontend/staticwebapp.config.json` includes route protection and Entra login redirect behavior.
+
+## Entra SSO and MFA/OTP (minimal setup)
+
+This project uses Azure Static Web Apps built-in authentication with Microsoft Entra ID.
+It is SSO-ready by default and does not require NextAuth/Auth.js for the current architecture.
+
+### Why this setup
+
+- Minimal moving parts: SWA handles sign-in, session, and identity headers.
+- Backend already parses `X-MS-CLIENT-PRINCIPAL` for roles and tenant context.
+- Future SSO support remains straightforward through Entra tenant settings.
+
+### Configure Entra for personal testing
+
+1. Keep the SWA auth config in `frontend/staticwebapp.config.json` as-is.
+2. In Microsoft Entra, use a single-tenant app configuration for initial testing.
+3. Assign yourself the app roles needed by backend policies (`administrator` or `companyadmin`) if required.
+4. Enable MFA for your user and prefer Microsoft Authenticator TOTP.
+
+### OTP note
+
+- MFA through Entra (Authenticator OTP challenge) is the simplest low-cost path.
+- Standalone custom OTP/passwordless flows are intentionally out of scope here.
+
+### Test flow
+
+1. Open the frontend and click **Login with Entra**.
+2. Complete sign-in and MFA challenge.
+3. Verify the auth panel on the home page (authenticated state, provider, roles).
+4. Call `GET /api/me` and confirm principal claims are present.
+5. Validate role-gated endpoint behavior:
+	- `GET /api/admin/tenant-context` returns `200` for admin role.
+	- The same endpoint returns `403` for non-admin users.

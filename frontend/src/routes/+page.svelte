@@ -8,24 +8,52 @@
     environment: string;
   };
 
+  type MeResponse = {
+    authenticated: boolean;
+    roles: string[];
+    principal: {
+      userDetails?: string;
+      userId?: string;
+      identityProvider?: string;
+    } | null;
+  };
+
   let health: HealthResponse | null = null;
   let healthError: string | null = null;
+  let me: MeResponse | null = null;
+  let meError: string | null = null;
 
   onMount(async () => {
     if (!PUBLIC_API_BASE_URL) {
       healthError = 'PUBLIC_API_BASE_URL is not configured.';
-      return;
+    } else {
+      try {
+        const response = await fetch(`${PUBLIC_API_BASE_URL}/health`);
+        if (!response.ok) {
+          throw new Error(`Health check failed with ${response.status}`);
+        }
+
+        health = (await response.json()) as HealthResponse;
+      } catch (error) {
+        healthError = error instanceof Error ? error.message : 'Unknown connection error.';
+      }
     }
 
+    const normalizedBaseUrl = PUBLIC_API_BASE_URL?.replace(/\/$/, '') ?? '';
+    const meEndpoint = normalizedBaseUrl ? `${normalizedBaseUrl}/api/me` : '/api/me';
+
     try {
-      const response = await fetch(`${PUBLIC_API_BASE_URL}/health`);
+      const response = await fetch(meEndpoint, {
+        credentials: 'include'
+      });
       if (!response.ok) {
-        throw new Error(`Health check failed with ${response.status}`);
+        throw new Error(`/api/me failed with ${response.status}`);
       }
 
-      health = (await response.json()) as HealthResponse;
+      me = (await response.json()) as MeResponse;
     } catch (error) {
-      healthError = error instanceof Error ? error.message : 'Unknown connection error.';
+      meError =
+        error instanceof Error ? error.message : 'Unable to determine authenticated principal state.';
     }
   });
 </script>
@@ -49,6 +77,8 @@
     <div class="actions">
       <a href="https://learn.microsoft.com/azure/static-web-apps/" target="_blank" rel="noreferrer">Static Web Apps</a>
       <a href="https://learn.microsoft.com/azure/container-apps/" target="_blank" rel="noreferrer">Container Apps</a>
+      <a href="/.auth/login/aad?post_login_redirect_uri=/">Login with Entra</a>
+      <a href="/.auth/logout?post_logout_redirect_uri=/">Logout</a>
     </div>
   </section>
 
@@ -84,6 +114,35 @@
         <li>Managed identity and Key Vault from day one</li>
         <li>GitHub Actions for infra and app delivery</li>
       </ul>
+    </article>
+
+    <article class="card">
+      <h2>Auth status (SWA Entra)</h2>
+      {#if me}
+        <dl>
+          <div>
+            <dt>Authenticated</dt>
+            <dd>{me.authenticated ? 'yes' : 'no'}</dd>
+          </div>
+          <div>
+            <dt>User</dt>
+            <dd>{me.principal?.userDetails ?? 'anonymous'}</dd>
+          </div>
+          <div>
+            <dt>Identity provider</dt>
+            <dd>{me.principal?.identityProvider ?? 'n/a'}</dd>
+          </div>
+          <div>
+            <dt>Roles</dt>
+            <dd>{me.roles.length ? me.roles.join(', ') : 'none'}</dd>
+          </div>
+        </dl>
+      {:else if meError}
+        <p class="error">{meError}</p>
+      {:else}
+        <p>Loading principal information...</p>
+      {/if}
+      <p class="hint">Use this panel after login to verify claims and role mapping.</p>
     </article>
   </section>
 </main>
@@ -217,5 +276,11 @@
   .error {
     color: #b91c1c;
     font-weight: 600;
+  }
+
+  .hint {
+    margin-top: 1rem;
+    color: #475569;
+    font-size: 0.92rem;
   }
 </style>
