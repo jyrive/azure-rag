@@ -70,8 +70,8 @@
     <div class="actions">
       <a href="https://learn.microsoft.com/azure/static-web-apps/" target="_blank" rel="noreferrer">Static Web Apps</a>
       <a href="https://learn.microsoft.com/azure/container-apps/" target="_blank" rel="noreferrer">Container Apps</a>
-      <a href="/.auth/login/aad?post_login_redirect_uri=/">Login with Entra</a>
-      <a href="/.auth/logout?post_logout_redirect_uri=/">Logout</a>
+      <a href="/.auth/login/aad?post_login_redirect_uri=/" data-sveltekit-reload>Login with Entra</a>
+      <a href="/.auth/logout?post_logout_redirect_uri=/" data-sveltekit-reload>Logout</a>
     </div>
   </section>
 

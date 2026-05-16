@@ -16,7 +16,7 @@
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/*.css", "/*.js", "/*.map"]
+    "exclude": ["/.auth/*", "/api/*", "/assets/*", "/*.css", "/*.js", "/*.map"]
   },
   "responseOverrides": {
     "401": {
