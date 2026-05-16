@@ -9,7 +9,10 @@
   };
 
   type MeResponse = {
-    clientPrincipal: {
+    authenticated: boolean;
+    roles?: string[];
+    appRoles?: string[];
+    principal: {
       userDetails?: string;
       userId?: string;
       identityProvider?: string;
@@ -54,6 +57,8 @@
 
   const apiBaseUrl = PUBLIC_API_BASE_URL || '/api';
 
+  const normalizeRole = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, '');
+
   const parseRoles = (value: string): string[] =>
     value
       .split(',')
@@ -67,6 +72,11 @@
     } catch {
       return fallback;
     }
+  };
+
+  const principalHasAdminRole = (principal: MeResponse['principal']): boolean => {
+    const roles = principal?.userRoles ?? [];
+    return roles.some((role: string) => normalizeRole(role) === 'administrator');
   };
 
   const fetchUserSuggestions = async (query: string) => {
@@ -199,11 +209,11 @@
     }
 
     try {
-      const response = await fetch('/.auth/me', {
+      const response = await fetch(`${apiBaseUrl}/me`, {
         credentials: 'include'
       });
       if (!response.ok) {
-        throw new Error(`/.auth/me failed with ${response.status}`);
+        throw new Error(`/api/me failed with ${response.status}`);
       }
 
       me = (await response.json()) as MeResponse;
@@ -212,7 +222,13 @@
         error instanceof Error ? error.message : 'Unable to determine authenticated principal state.';
     }
 
-    if (!me?.clientPrincipal) {
+    if (!me?.principal) {
+      return;
+    }
+
+    canManageRoles = principalHasAdminRole(me.principal);
+
+    if (!canManageRoles) {
       return;
     }
 
@@ -221,16 +237,12 @@
         credentials: 'include'
       });
 
-      if (response.status === 401 || response.status === 403) {
+      if (!response.ok) {
+        adminCheckError = `Admin context check returned ${response.status}.`;
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(`Admin context check failed with ${response.status}`);
-      }
-
       adminContext = (await response.json()) as AdminTenantContextResponse;
-      canManageRoles = Boolean(adminContext.roles?.includes('administrator'));
     } catch (error) {
       adminCheckError =
         error instanceof Error ? error.message : 'Unable to verify administrator capabilities.';
@@ -299,11 +311,11 @@
     <article class="card">
       <h2>Auth status (SWA Entra)</h2>
       {#if me}
-        {@const principal = me.clientPrincipal}
+        {@const principal = me.principal}
         <dl>
           <div>
             <dt>Authenticated</dt>
-            <dd>{principal ? 'yes' : 'no'}</dd>
+            <dd>{me.authenticated ? 'yes' : 'no'}</dd>
           </div>
           <div>
             <dt>User</dt>
@@ -315,7 +327,7 @@
           </div>
           <div>
             <dt>Roles</dt>
-            <dd>{principal?.userRoles?.length ? principal.userRoles.join(', ') : 'none'}</dd>
+            <dd>{me.roles?.length ? me.roles.join(', ') : 'none'}</dd>
           </div>
         </dl>
       {:else if meError}
