@@ -218,12 +218,27 @@ jobs:
           set -euo pipefail
           HEALTH_URL="https://${{ steps.infra.outputs.backend_fqdn }}/health"
           echo "Checking backend health at: $HEALTH_URL"
-          curl --fail --silent --show-error \
+          HTTP_CODE=$(curl --silent --show-error \
+            --output /tmp/backend-health.txt \
+            --write-out "%{http_code}" \
             --retry 8 \
             --retry-all-errors \
             --retry-delay 5 \
             --max-time 20 \
-            "$HEALTH_URL"
+            "$HEALTH_URL")
+
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+            echo "Backend health check reachable (HTTP $HTTP_CODE)."
+            if [ -s /tmp/backend-health.txt ]; then
+              cat /tmp/backend-health.txt
+            fi
+          else
+            echo "Unexpected backend health status: $HTTP_CODE"
+            if [ -s /tmp/backend-health.txt ]; then
+              cat /tmp/backend-health.txt
+            fi
+            exit 1
+          fi
 
       - name: Deploy frontend to Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
