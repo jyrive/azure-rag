@@ -437,8 +437,8 @@ def me(x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIE
         try:
             tenant_context = resolve_tenant_context_with_app_roles(tenant_context)
             app_roles = tenant_context["appRoles"]
-        except HTTPException:
-            # Keep /api/me available even when DB config is incomplete.
+        except Exception:  # noqa: BLE001
+            # Keep /api/me available even when profile storage or indexes are unavailable.
             pass
 
     return {
