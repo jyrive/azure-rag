@@ -243,10 +243,9 @@ jobs:
       - name: Deploy frontend to Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         env:
-          # Baked into the SvelteKit bundle at build time so the browser knows
-          # which backend URL to call. Without this, the build falls back to
-          # http://localhost:8000 and the deployed site can't reach the API.
-          PUBLIC_API_BASE_URL: https://${{ steps.infra.outputs.backend_fqdn }}
+          # Route browser API calls through SWA so auth context can be forwarded
+          # to the linked backend and CORS issues are avoided.
+          PUBLIC_API_BASE_URL: /api
         with:
           azure_static_web_apps_api_token: ${{ steps.infra.outputs.swa_deployment_token }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}

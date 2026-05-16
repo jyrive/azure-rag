@@ -21,21 +21,18 @@
   let healthError: string | null = null;
   let me: MeResponse | null = null;
   let meError: string | null = null;
+  const apiBaseUrl = PUBLIC_API_BASE_URL || '/api';
 
   onMount(async () => {
-    if (!PUBLIC_API_BASE_URL) {
-      healthError = 'PUBLIC_API_BASE_URL is not configured.';
-    } else {
-      try {
-        const response = await fetch(`${PUBLIC_API_BASE_URL}/health`);
-        if (!response.ok) {
-          throw new Error(`Health check failed with ${response.status}`);
-        }
-
-        health = (await response.json()) as HealthResponse;
-      } catch (error) {
-        healthError = error instanceof Error ? error.message : 'Unknown connection error.';
+    try {
+      const response = await fetch(`${apiBaseUrl}/health`);
+      if (!response.ok) {
+        throw new Error(`Health check failed with ${response.status}`);
       }
+
+      health = (await response.json()) as HealthResponse;
+    } catch (error) {
+      healthError = error instanceof Error ? error.message : 'Unknown connection error.';
     }
 
     try {

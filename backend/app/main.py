@@ -328,6 +328,11 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/api/health")
+def api_health() -> dict[str, Any]:
+    return health()
+
+
 @app.get("/api/me")
 def me(x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL")) -> dict[str, Any]:
     principal = decode_client_principal(x_ms_client_principal)
