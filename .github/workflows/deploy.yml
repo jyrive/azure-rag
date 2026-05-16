@@ -19,6 +19,43 @@ on:
         options:
           - dev
           - prod
+      smart_mode:
+        description: Use selective deployment logic (recommended)
+        type: boolean
+        required: true
+        default: true
+      force_full:
+        description: Force full deployment of backend, frontend, and infra
+        type: boolean
+        required: true
+        default: false
+      deploy_backend:
+        description: Backend deployment selection
+        type: choice
+        required: true
+        default: auto
+        options:
+          - auto
+          - on
+          - off
+      deploy_frontend:
+        description: Frontend deployment selection
+        type: choice
+        required: true
+        default: auto
+        options:
+          - auto
+          - on
+          - off
+      deploy_infra:
+        description: Infrastructure deployment selection
+        type: choice
+        required: true
+        default: auto
+        options:
+          - auto
+          - on
+          - off
 
 permissions:
   id-token: write
@@ -29,7 +66,156 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_backend: ${{ steps.detect.outputs.deploy_backend }}
+      deploy_frontend: ${{ steps.detect.outputs.deploy_frontend }}
+      deploy_infra: ${{ steps.detect.outputs.deploy_infra }}
+      need_registry: ${{ steps.detect.outputs.need_registry }}
+      need_infra_apply: ${{ steps.detect.outputs.need_infra_apply }}
+      check_backend: ${{ steps.detect.outputs.check_backend }}
+      any_selected: ${{ steps.detect.outputs.any_selected }}
+      selection_reason: ${{ steps.detect.outputs.selection_reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect deploy scope
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          INPUT_SMART_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.smart_mode || 'true' }}
+          INPUT_FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full || 'false' }}
+          INPUT_DEPLOY_BACKEND: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_backend || 'auto' }}
+          INPUT_DEPLOY_FRONTEND: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_frontend || 'auto' }}
+          INPUT_DEPLOY_INFRA: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_infra || 'auto' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          selection_reason=""
+          deploy_backend="false"
+          deploy_frontend="false"
+          deploy_infra="false"
+
+          detect_from_diff() {
+            local base_sha="$1"
+            local changed_files
+
+            if ! changed_files=$(git diff --name-only "$base_sha" HEAD); then
+              echo "WARN: Failed to compute git diff from $base_sha to HEAD. Falling back to safe full selection."
+              deploy_backend="true"
+              deploy_frontend="true"
+              deploy_infra="true"
+              selection_reason="safe-fallback-diff-failed"
+              return 0
+            fi
+
+            if echo "$changed_files" | grep -qE '^backend/'; then
+              deploy_backend="true"
+            fi
+            if echo "$changed_files" | grep -qE '^frontend/'; then
+              deploy_frontend="true"
+            fi
+            if echo "$changed_files" | grep -qE '^infra/'; then
+              deploy_infra="true"
+            fi
+
+            # Pipeline changes should execute full deployment to keep behavior deterministic.
+            if echo "$changed_files" | grep -qE '^\.github/workflows/deploy\.yml$'; then
+              deploy_backend="true"
+              deploy_frontend="true"
+              deploy_infra="true"
+              selection_reason="workflow-changed"
+              return 0
+            fi
+
+            if [[ -z "$selection_reason" ]]; then
+              selection_reason="path-detection"
+            fi
+          }
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            base_sha="$EVENT_BEFORE"
+
+            if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+              git fetch --no-tags --prune --depth=50 origin main || true
+              base_sha="$(git merge-base HEAD origin/main || true)"
+            fi
+
+            if [[ -z "$base_sha" ]]; then
+              echo "WARN: Could not resolve base SHA. Falling back to safe full selection."
+              deploy_backend="true"
+              deploy_frontend="true"
+              deploy_infra="true"
+              selection_reason="safe-fallback-no-base"
+            else
+              detect_from_diff "$base_sha"
+            fi
+          else
+            # workflow_dispatch path
+            if [[ "$INPUT_SMART_MODE" != "true" || "$INPUT_FORCE_FULL" == "true" ]]; then
+              deploy_backend="true"
+              deploy_frontend="true"
+              deploy_infra="true"
+              selection_reason="manual-full"
+            else
+              # For manual runs, auto defaults to on for reliability unless explicitly turned off.
+              case "$INPUT_DEPLOY_BACKEND" in
+                on|auto) deploy_backend="true" ;;
+                off) deploy_backend="false" ;;
+                *) echo "ERROR: Invalid deploy_backend value: $INPUT_DEPLOY_BACKEND"; exit 1 ;;
+              esac
+              case "$INPUT_DEPLOY_FRONTEND" in
+                on|auto) deploy_frontend="true" ;;
+                off) deploy_frontend="false" ;;
+                *) echo "ERROR: Invalid deploy_frontend value: $INPUT_DEPLOY_FRONTEND"; exit 1 ;;
+              esac
+              case "$INPUT_DEPLOY_INFRA" in
+                on|auto) deploy_infra="true" ;;
+                off) deploy_infra="false" ;;
+                *) echo "ERROR: Invalid deploy_infra value: $INPUT_DEPLOY_INFRA"; exit 1 ;;
+              esac
+              selection_reason="manual-smart"
+            fi
+          fi
+
+          need_registry="false"
+          need_infra_apply="false"
+          check_backend="false"
+          any_selected="false"
+
+          if [[ "$deploy_backend" == "true" || "$deploy_infra" == "true" ]]; then
+            need_registry="true"
+            need_infra_apply="true"
+            check_backend="true"
+          fi
+
+          if [[ "$deploy_backend" == "true" || "$deploy_frontend" == "true" || "$deploy_infra" == "true" ]]; then
+            any_selected="true"
+          fi
+
+          echo "deploy_backend=$deploy_backend" >> "$GITHUB_OUTPUT"
+          echo "deploy_frontend=$deploy_frontend" >> "$GITHUB_OUTPUT"
+          echo "deploy_infra=$deploy_infra" >> "$GITHUB_OUTPUT"
+          echo "need_registry=$need_registry" >> "$GITHUB_OUTPUT"
+          echo "need_infra_apply=$need_infra_apply" >> "$GITHUB_OUTPUT"
+          echo "check_backend=$check_backend" >> "$GITHUB_OUTPUT"
+          echo "any_selected=$any_selected" >> "$GITHUB_OUTPUT"
+          echo "selection_reason=$selection_reason" >> "$GITHUB_OUTPUT"
+
+          echo "Selection reason: $selection_reason"
+          echo "Deploy backend:  $deploy_backend"
+          echo "Deploy frontend: $deploy_frontend"
+          echo "Deploy infra:    $deploy_infra"
+
   deploy:
+    needs: detect
+    if: needs.detect.outputs.any_selected == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
@@ -49,7 +235,15 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Print selected deployment scope
+        run: |
+          echo "Reason:   ${{ needs.detect.outputs.selection_reason }}"
+          echo "Backend:  ${{ needs.detect.outputs.deploy_backend }}"
+          echo "Frontend: ${{ needs.detect.outputs.deploy_frontend }}"
+          echo "Infra:    ${{ needs.detect.outputs.deploy_infra }}"
+
       - name: Deploy registry + identity
+        if: needs.detect.outputs.need_registry == 'true'
         id: registry
         uses: azure/cli@v2
         with:
@@ -122,6 +316,7 @@ jobs:
             echo "UAMI: $UAMI_ID"
 
       - name: Build & push backend image to ACR
+        if: needs.detect.outputs.deploy_backend == 'true'
         id: image
         uses: azure/cli@v2
         with:
@@ -141,12 +336,46 @@ jobs:
             echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
             echo "Pushed: $IMAGE_REF"
 
+      - name: Resolve existing backend image for infra-only deployment
+        if: needs.detect.outputs.need_infra_apply == 'true' && needs.detect.outputs.deploy_backend != 'true'
+        id: existing_image
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az config set extension.use_dynamic_install=yes_without_prompt
+
+            EXISTING_IMAGE=$(az containerapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[?starts_with(name, 'api-${DEPLOY_ENVIRONMENT}-')].properties.template.containers[0].image | [0]" \
+              -o tsv)
+
+            if [ -z "$EXISTING_IMAGE" ] || [ "$EXISTING_IMAGE" = "null" ]; then
+              echo "ERROR: Infra deployment needs backendImage, but no existing backend image was found."
+              echo "Run with force_full=true or deploy_backend=on to build a new image."
+              exit 1
+            fi
+
+            echo "image_ref=$EXISTING_IMAGE" >> "$GITHUB_OUTPUT"
+            echo "Reusing backend image: $EXISTING_IMAGE"
+
       - name: Deploy infrastructure
+        if: needs.detect.outputs.need_infra_apply == 'true'
         id: infra
         uses: azure/cli@v2
         with:
           inlineScript: |
             set -euo pipefail
+
+            IMAGE_REF="${{ steps.image.outputs.image_ref }}"
+            if [ -z "$IMAGE_REF" ]; then
+              IMAGE_REF="${{ steps.existing_image.outputs.image_ref }}"
+            fi
+
+            if [ -z "$IMAGE_REF" ]; then
+              echo "ERROR: Could not resolve backend image for infrastructure deployment."
+              exit 1
+            fi
 
             DEP_STATE=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -183,7 +412,7 @@ jobs:
               --template-file infra/main.bicep \
               --parameters infra/${DEPLOY_ENVIRONMENT}.bicepparam \
               --parameters \
-                backendImage="${{ steps.image.outputs.image_ref }}"
+                backendImage="$IMAGE_REF"
 
             STATIC_WEB_APP_NAME=$(az deployment group show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -213,7 +442,37 @@ jobs:
             echo "Backend FQDN:  https://$BACKEND_FQDN"
             echo "Frontend host: https://$SWA_HOST"
 
+      - name: Resolve existing Static Web App deployment token
+        if: needs.detect.outputs.deploy_frontend == 'true' && needs.detect.outputs.need_infra_apply != 'true'
+        id: infra_existing
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az config set extension.use_dynamic_install=yes_without_prompt
+
+            STATIC_WEB_APP_NAME=$(az deployment group show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$DEPLOYMENT_NAME" \
+              --query properties.outputs.staticSiteNameOut.value -o tsv)
+
+            if [ -z "$STATIC_WEB_APP_NAME" ] || [ "$STATIC_WEB_APP_NAME" = "null" ]; then
+              echo "ERROR: Could not resolve Static Web App name from deployment outputs."
+              echo "Run with deploy_infra=on or force_full=true if this environment has not been provisioned yet."
+              exit 1
+            fi
+
+            SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list \
+              --name "$STATIC_WEB_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query properties.apiKey -o tsv)
+            echo "::add-mask::$SWA_DEPLOYMENT_TOKEN"
+
+            echo "swa_deployment_token=$SWA_DEPLOYMENT_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "Resolved SWA name: $STATIC_WEB_APP_NAME"
+
       - name: Smoke test backend health
+        if: needs.detect.outputs.check_backend == 'true'
         run: |
           set -euo pipefail
           HEALTH_URL="https://${{ steps.infra.outputs.backend_fqdn }}/health"
@@ -241,34 +500,58 @@ jobs:
           fi
 
       - name: Deploy frontend to Static Web Apps
+        if: needs.detect.outputs.deploy_frontend == 'true'
         uses: Azure/static-web-apps-deploy@v1
         env:
           # Route browser API calls through SWA so auth context can be forwarded
           # to the linked backend and CORS issues are avoided.
           PUBLIC_API_BASE_URL: /api
         with:
-          azure_static_web_apps_api_token: ${{ steps.infra.outputs.swa_deployment_token }}
+          azure_static_web_apps_api_token: ${{ steps.infra.outputs.swa_deployment_token || steps.infra_existing.outputs.swa_deployment_token }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           app_location: frontend
           output_location: build
-          app_build_command: npm install && npm run build && cp staticwebapp.config.json build/staticwebapp.config.json
+          app_build_command: npm ci && npm run build && cp staticwebapp.config.json build/staticwebapp.config.json
 
       - name: Set up Python for smoke test
-        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        if: env.DEPLOY_ENVIRONMENT == 'dev' && needs.detect.outputs.check_backend == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
       - name: Install smoke test dependencies
-        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        if: env.DEPLOY_ENVIRONMENT == 'dev' && needs.detect.outputs.check_backend == 'true'
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install pymongo
 
       - name: Run post-deploy smoke test
-        if: env.DEPLOY_ENVIRONMENT == 'dev'
+        if: env.DEPLOY_ENVIRONMENT == 'dev' && needs.detect.outputs.check_backend == 'true'
         env:
           SKIP_WORKFLOW_STATUS: '1'
         run: bash scripts/check-deploy.sh "$DEPLOY_ENVIRONMENT"
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "## Deployment summary"
+            echo "- Selection reason: ${{ needs.detect.outputs.selection_reason }}"
+            echo "- Backend selected: ${{ needs.detect.outputs.deploy_backend }}"
+            echo "- Frontend selected: ${{ needs.detect.outputs.deploy_frontend }}"
+            echo "- Infra selected: ${{ needs.detect.outputs.deploy_infra }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  no_changes:
+    needs: detect
+    if: needs.detect.outputs.any_selected != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op summary
+        run: |
+          {
+            echo "## Deployment summary"
+            echo "No components were selected for deployment."
+            echo "- Selection reason: ${{ needs.detect.outputs.selection_reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"

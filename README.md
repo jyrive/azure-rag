@@ -103,9 +103,24 @@ Create GitHub Environments named `dev` and `prod`, then set these secrets in eac
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
-- `SWA_DEPLOYMENT_TOKEN`
 
-The deployment workflow selects `dev` or `prod` and deploys infrastructure plus backend and frontend artifacts to that instance.
+The deployment workflow selects `dev` or `prod` and resolves the Static Web Apps deployment token from Azure at runtime.
+
+### Smart deployment modes
+
+The workflow now supports selective deployment with reliability-first defaults.
+
+- `push` to `main`: auto-detects changed paths and deploys only impacted components.
+- `workflow_dispatch`: supports manual control with these inputs:
+- `smart_mode=true` keeps selective logic active.
+- `force_full=true` overrides everything and runs full backend + frontend + infra deployment.
+- `deploy_backend`, `deploy_frontend`, `deploy_infra`: `auto|on|off` selectors for manual runs.
+
+Safety behavior:
+
+- If change detection cannot determine scope safely, the workflow falls back to full deployment.
+- If infra is selected without backend build, workflow reuses the currently deployed backend image.
+- If required existing resources or outputs are missing, the run fails early with remediation guidance.
 
 ## Cosmos DB serverless migration
 
