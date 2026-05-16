@@ -9,12 +9,11 @@
   };
 
   type MeResponse = {
-    authenticated: boolean;
-    roles: string[];
-    principal: {
+    clientPrincipal: {
       userDetails?: string;
       userId?: string;
       identityProvider?: string;
+      userRoles?: string[];
     } | null;
   };
 
@@ -39,15 +38,12 @@
       }
     }
 
-    const normalizedBaseUrl = PUBLIC_API_BASE_URL?.replace(/\/$/, '') ?? '';
-    const meEndpoint = normalizedBaseUrl ? `${normalizedBaseUrl}/api/me` : '/api/me';
-
     try {
-      const response = await fetch(meEndpoint, {
+      const response = await fetch('/.auth/me', {
         credentials: 'include'
       });
       if (!response.ok) {
-        throw new Error(`/api/me failed with ${response.status}`);
+        throw new Error(`/.auth/me failed with ${response.status}`);
       }
 
       me = (await response.json()) as MeResponse;
@@ -119,22 +115,23 @@
     <article class="card">
       <h2>Auth status (SWA Entra)</h2>
       {#if me}
+        {@const principal = me.clientPrincipal}
         <dl>
           <div>
             <dt>Authenticated</dt>
-            <dd>{me.authenticated ? 'yes' : 'no'}</dd>
+            <dd>{principal ? 'yes' : 'no'}</dd>
           </div>
           <div>
             <dt>User</dt>
-            <dd>{me.principal?.userDetails ?? 'anonymous'}</dd>
+            <dd>{principal?.userDetails ?? 'anonymous'}</dd>
           </div>
           <div>
             <dt>Identity provider</dt>
-            <dd>{me.principal?.identityProvider ?? 'n/a'}</dd>
+            <dd>{principal?.identityProvider ?? 'n/a'}</dd>
           </div>
           <div>
             <dt>Roles</dt>
-            <dd>{me.roles.length ? me.roles.join(', ') : 'none'}</dd>
+            <dd>{principal?.userRoles?.length ? principal.userRoles.join(', ') : 'none'}</dd>
           </div>
         </dl>
       {:else if meError}
