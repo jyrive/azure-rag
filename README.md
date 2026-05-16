@@ -200,3 +200,34 @@ It is SSO-ready by default and does not require NextAuth/Auth.js for the current
 5. Validate role-gated endpoint behavior:
 	- `GET /api/admin/tenant-context` returns `200` for admin role.
 	- The same endpoint returns `403` for non-admin users.
+
+## JIT user provisioning and app roles
+
+The backend supports just-in-time (JIT) user provisioning with a default app role.
+
+- First successful login (or first authenticated API request) automatically creates a user profile in Cosmos DB.
+- New users receive the default app role from `DEFAULT_APP_ROLE` (defaults to `member`).
+- Effective authorization roles are the union of:
+	- Entra/SWA principal roles (`claims.roles` and `userRoles`)
+	- Stored app roles from the user profile
+	- Implicit `authenticated` role for signed-in users
+
+This means a separate registration page is not required.
+
+### Role management endpoint
+
+Administrators can override app roles for any user:
+
+- `PUT /api/admin/users/{user_id}/roles`
+- `GET /api/admin/users?q=<search>&limit=8` for admin user lookup/autocomplete
+- Requires `administrator` role
+- Request body:
+
+```json
+{
+	"roles": ["member", "companyadmin"],
+	"company_id": "optional-company-id"
+}
+```
+
+If `roles` is empty, the backend applies the configured default app role.

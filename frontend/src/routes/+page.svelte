@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { PUBLIC_API_BASE_URL, PUBLIC_APP_NAME } from '$env/static/public';
 
   type HealthResponse = {
@@ -17,11 +17,174 @@
     } | null;
   };
 
+  type AdminTenantContextResponse = {
+    companyId?: string | null;
+    userId?: string | null;
+    roles?: string[];
+    appRoles?: string[];
+  };
+
+  type AdminUserSuggestion = {
+    userId: string;
+    userDetails?: string | null;
+    companyId?: string | null;
+    appRoles?: string[];
+    lastLoginAt?: string | null;
+  };
+
   let health: HealthResponse | null = null;
   let healthError: string | null = null;
   let me: MeResponse | null = null;
   let meError: string | null = null;
+  let adminContext: AdminTenantContextResponse | null = null;
+  let adminCheckError: string | null = null;
+  let canManageRoles = false;
+
+  let targetUserId = '';
+  let targetRoles = 'member';
+  let targetCompanyId = '';
+  let roleUpdateMessage: string | null = null;
+  let roleUpdateError: string | null = null;
+  let isUpdatingRoles = false;
+  let userSuggestions: AdminUserSuggestion[] = [];
+  let suggestionError: string | null = null;
+  let isLoadingSuggestions = false;
+
+  let suggestionTimer: ReturnType<typeof setTimeout> | null = null;
+
   const apiBaseUrl = PUBLIC_API_BASE_URL || '/api';
+
+  const parseRoles = (value: string): string[] =>
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const readErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      return payload.detail || fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const fetchUserSuggestions = async (query: string) => {
+    if (!canManageRoles) {
+      userSuggestions = [];
+      return;
+    }
+
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      userSuggestions = [];
+      suggestionError = null;
+      return;
+    }
+
+    isLoadingSuggestions = true;
+    suggestionError = null;
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/admin/users?q=${encodeURIComponent(normalized)}&limit=8`,
+        {
+          credentials: 'include'
+        }
+      );
+
+      if (!response.ok) {
+        suggestionError = await readErrorMessage(
+          response,
+          `User lookup failed with ${response.status}.`
+        );
+        userSuggestions = [];
+        return;
+      }
+
+      const payload = (await response.json()) as { users?: AdminUserSuggestion[] };
+      userSuggestions = payload.users || [];
+    } catch (error) {
+      suggestionError = error instanceof Error ? error.message : 'User lookup failed.';
+      userSuggestions = [];
+    } finally {
+      isLoadingSuggestions = false;
+    }
+  };
+
+  const onTargetUserInput = () => {
+    if (suggestionTimer) {
+      clearTimeout(suggestionTimer);
+    }
+
+    suggestionTimer = setTimeout(() => {
+      fetchUserSuggestions(targetUserId);
+    }, 220);
+  };
+
+  const selectSuggestion = (user: AdminUserSuggestion) => {
+    targetUserId = user.userId;
+    targetCompanyId = user.companyId || '';
+    if (user.appRoles?.length) {
+      targetRoles = user.appRoles.join(', ');
+    }
+    userSuggestions = [];
+    suggestionError = null;
+  };
+
+  const updateUserRoles = async (event: SubmitEvent) => {
+    event.preventDefault();
+    roleUpdateMessage = null;
+    roleUpdateError = null;
+
+    const userId = targetUserId.trim();
+    if (!userId) {
+      roleUpdateError = 'User ID is required.';
+      return;
+    }
+
+    isUpdatingRoles = true;
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/users/${encodeURIComponent(userId)}/roles`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          roles: parseRoles(targetRoles),
+          company_id: targetCompanyId.trim() || null
+        })
+      });
+
+      if (!response.ok) {
+        roleUpdateError = await readErrorMessage(response, `Role update failed with ${response.status}.`);
+        return;
+      }
+
+      const payload = (await response.json()) as {
+        userId: string;
+        appRoles: string[];
+        companyId?: string | null;
+      };
+
+      roleUpdateMessage = `Updated ${payload.userId} roles: ${payload.appRoles.join(', ')}.`;
+      targetCompanyId = payload.companyId || '';
+      targetRoles = payload.appRoles.join(', ');
+      fetchUserSuggestions(targetUserId);
+    } catch (error) {
+      roleUpdateError = error instanceof Error ? error.message : 'Role update failed.';
+    } finally {
+      isUpdatingRoles = false;
+    }
+  };
+
+  onDestroy(() => {
+    if (suggestionTimer) {
+      clearTimeout(suggestionTimer);
+    }
+  });
 
   onMount(async () => {
     try {
@@ -47,6 +210,30 @@
     } catch (error) {
       meError =
         error instanceof Error ? error.message : 'Unable to determine authenticated principal state.';
+    }
+
+    if (!me?.clientPrincipal) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/tenant-context`, {
+        credentials: 'include'
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Admin context check failed with ${response.status}`);
+      }
+
+      adminContext = (await response.json()) as AdminTenantContextResponse;
+      canManageRoles = Boolean(adminContext.roles?.includes('administrator'));
+    } catch (error) {
+      adminCheckError =
+        error instanceof Error ? error.message : 'Unable to verify administrator capabilities.';
     }
   });
 </script>
@@ -137,7 +324,77 @@
         <p>Loading principal information...</p>
       {/if}
       <p class="hint">Use this panel after login to verify claims and role mapping.</p>
+      {#if adminCheckError}
+        <p class="hint error">{adminCheckError}</p>
+      {/if}
     </article>
+
+    {#if canManageRoles}
+      <article class="card admin">
+        <h2>Admin: user role management</h2>
+        <p class="hint">
+          Signed in as {adminContext?.userId ?? 'administrator'}.
+          Update app roles for a user without leaving this page.
+        </p>
+
+        <form class="admin-form" on:submit={updateUserRoles}>
+          <label>
+            <span>Target user ID</span>
+            <input
+              bind:value={targetUserId}
+              placeholder="oid-or-sub"
+              required
+              list="admin-user-suggestions"
+              on:input={onTargetUserInput}
+            />
+            <datalist id="admin-user-suggestions">
+              {#each userSuggestions as user}
+                <option value={user.userId}>{user.userDetails || ''}</option>
+              {/each}
+            </datalist>
+          </label>
+
+          {#if isLoadingSuggestions}
+            <p class="hint">Searching users...</p>
+          {/if}
+          {#if suggestionError}
+            <p class="error">{suggestionError}</p>
+          {/if}
+          {#if userSuggestions.length}
+            <div class="suggestions" aria-label="User suggestions">
+              {#each userSuggestions as user}
+                <button type="button" class="suggestion-item" on:click={() => selectSuggestion(user)}>
+                  <strong>{user.userDetails || user.userId}</strong>
+                  <span>{user.userId}</span>
+                  <span>{user.companyId || 'no company'}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          <label>
+            <span>App roles (comma-separated)</span>
+            <input bind:value={targetRoles} placeholder="member, companyadmin" />
+          </label>
+
+          <label>
+            <span>Company ID (optional)</span>
+            <input bind:value={targetCompanyId} placeholder="company-123" />
+          </label>
+
+          <button type="submit" disabled={isUpdatingRoles}>
+            {isUpdatingRoles ? 'Updating...' : 'Update roles'}
+          </button>
+        </form>
+
+        {#if roleUpdateMessage}
+          <p class="ok">{roleUpdateMessage}</p>
+        {/if}
+        {#if roleUpdateError}
+          <p class="error">{roleUpdateError}</p>
+        {/if}
+      </article>
+    {/if}
   </section>
 </main>
 
@@ -236,6 +493,13 @@
     background: linear-gradient(180deg, rgba(14, 165, 233, 0.14), rgba(255, 255, 255, 0.92));
   }
 
+  .card.admin {
+    border-color: rgba(2, 132, 199, 0.35);
+    background:
+      radial-gradient(circle at top right, rgba(2, 132, 199, 0.12), transparent 45%),
+      rgba(255, 255, 255, 0.9);
+  }
+
   h2 {
     margin: 0 0 1rem;
     font-size: 1.15rem;
@@ -276,5 +540,83 @@
     margin-top: 1rem;
     color: #475569;
     font-size: 0.92rem;
+  }
+
+  .admin-form {
+    margin-top: 1rem;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .admin-form label {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .admin-form span {
+    font-size: 0.82rem;
+    color: #475569;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .admin-form input {
+    border: 1px solid rgba(15, 23, 42, 0.18);
+    border-radius: 12px;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: #0f172a;
+    background: rgba(255, 255, 255, 0.96);
+  }
+
+  .admin-form button {
+    margin-top: 0.4rem;
+    width: fit-content;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.65rem 1rem;
+    background: #0284c7;
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .admin-form button:disabled {
+    opacity: 0.7;
+    cursor: progress;
+  }
+
+  .suggestions {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.3rem 0 0.5rem;
+  }
+
+  .suggestion-item {
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    background: rgba(248, 250, 252, 0.95);
+    border-radius: 12px;
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    cursor: pointer;
+    display: grid;
+    gap: 0.12rem;
+  }
+
+  .suggestion-item strong {
+    font-size: 0.9rem;
+  }
+
+  .suggestion-item span {
+    font-size: 0.8rem;
+    color: #475569;
+  }
+
+  .ok {
+    margin-top: 0.9rem;
+    color: #047857;
+    font-weight: 600;
   }
 </style>

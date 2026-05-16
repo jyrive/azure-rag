@@ -4,13 +4,14 @@ import base64
 from datetime import datetime, timezone
 import json
 import os
+import re
 from typing import Any
 
 from azure.core.credentials import AzureKeyCredential
 from azure.eventgrid import EventGridEvent, EventGridPublisherClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.keyvault.secrets import SecretClient
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AzureOpenAI
 from pydantic import BaseModel, Field
@@ -31,6 +32,7 @@ _cached_runtime_config: dict[str, Any] | None = None
 _mongo_client: MongoClient | None = None
 _openai_client: AzureOpenAI | None = None
 _indexes_bootstrapped = False
+_user_indexes_bootstrapped = False
 
 
 def decode_client_principal(raw_principal: str | None) -> dict[str, Any] | None:
@@ -133,8 +135,18 @@ class PublishEventRequest(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class UpdateUserRolesRequest(BaseModel):
+    roles: list[str] = Field(default_factory=list)
+    company_id: str | None = None
+
+
 def _normalize_role(value: str) -> str:
     return value.strip().lower().replace(" ", "")
+
+
+def get_default_app_role() -> str:
+    role = _normalize_role(os.getenv("DEFAULT_APP_ROLE", "member"))
+    return role or "member"
 
 
 def _claim_value(principal: dict[str, Any], claim_types: list[str]) -> str | None:
@@ -210,6 +222,21 @@ def enforce_company_scope(
     raise HTTPException(status_code=403, detail=f"Insufficient role to {action}.")
 
 
+def merge_principal_and_app_roles(principal_roles: set[str], app_roles: list[str]) -> set[str]:
+    merged = set(principal_roles)
+
+    for role in app_roles:
+        if isinstance(role, str):
+            normalized = _normalize_role(role)
+            if normalized:
+                merged.add(normalized)
+
+    if merged:
+        merged.add("authenticated")
+
+    return merged
+
+
 def get_tenant_context(x_ms_client_principal: str | None) -> dict[str, Any]:
     principal = decode_client_principal(x_ms_client_principal)
     if not principal:
@@ -218,6 +245,7 @@ def get_tenant_context(x_ms_client_principal: str | None) -> dict[str, Any]:
             "companyId": None,
             "userId": None,
             "roles": set(),
+            "appRoles": [],
         }
 
     company_id = _claim_value(principal, ["company_id", "tenant_id", "tid"])
@@ -228,7 +256,23 @@ def get_tenant_context(x_ms_client_principal: str | None) -> dict[str, Any]:
         "companyId": company_id,
         "userId": str(user_id) if user_id else None,
         "roles": get_principal_roles(principal),
+        "appRoles": [],
     }
+
+
+def get_mongo_database() -> Any:
+    global _mongo_client
+
+    runtime_config = get_runtime_config()
+    connection_string = runtime_config.get("cosmosConnectionString", "")
+    if not connection_string:
+        raise HTTPException(status_code=500, detail="Cosmos DB connection is not configured.")
+
+    if _mongo_client is None:
+        _mongo_client = MongoClient(connection_string)
+
+    database_name = os.getenv("RAG_DATABASE_NAME", "ragdb")
+    return _mongo_client[database_name]
 
 
 def ensure_collection_indexes(collection: Any) -> None:
@@ -269,20 +313,70 @@ def ensure_collection_indexes(collection: Any) -> None:
     _indexes_bootstrapped = True
 
 
+def ensure_user_collection_indexes(collection: Any) -> None:
+    global _user_indexes_bootstrapped
+
+    if _user_indexes_bootstrapped:
+        return
+
+    collection.create_index([("user_id", 1)], unique=True, name="user_id_unique_idx")
+    collection.create_index([("company_id", 1)], name="company_id_idx")
+    _user_indexes_bootstrapped = True
+
+
+def get_user_collection() -> Any:
+    database = get_mongo_database()
+    collection_name = os.getenv("RAG_USER_COLLECTION_NAME", "users")
+    collection = database[collection_name]
+    ensure_user_collection_indexes(collection)
+    return collection
+
+
+def resolve_tenant_context_with_app_roles(tenant_context: dict[str, Any]) -> dict[str, Any]:
+    user_id = tenant_context.get("userId")
+    principal = tenant_context.get("principal")
+    if not user_id or not principal:
+        return tenant_context
+
+    user_collection = get_user_collection()
+    now = datetime.now(tz=timezone.utc).isoformat()
+    default_role = get_default_app_role()
+    user_details = principal.get("userDetails") if isinstance(principal.get("userDetails"), str) else None
+    identity_provider = principal.get("identityProvider") if isinstance(principal.get("identityProvider"), str) else None
+
+    user_collection.update_one(
+        {"user_id": user_id},
+        {
+            "$setOnInsert": {
+                "user_id": user_id,
+                "company_id": tenant_context.get("companyId"),
+                "roles": [default_role],
+                "createdAt": now,
+                "createdBy": "jit-provisioner",
+            },
+            "$set": {
+                "lastLoginAt": now,
+                "user_details": user_details,
+                "identity_provider": identity_provider,
+                "company_id": tenant_context.get("companyId"),
+            },
+        },
+        upsert=True,
+    )
+
+    user_doc = user_collection.find_one({"user_id": user_id}, {"_id": 0, "roles": 1}) or {}
+    app_roles = user_doc.get("roles", []) if isinstance(user_doc.get("roles"), list) else []
+
+    merged_context = dict(tenant_context)
+    merged_context["appRoles"] = app_roles
+    merged_context["roles"] = merge_principal_and_app_roles(tenant_context.get("roles", set()), app_roles)
+    return merged_context
+
+
 def get_mongo_collection() -> Any:
-    global _mongo_client
-
-    runtime_config = get_runtime_config()
-    connection_string = runtime_config.get("cosmosConnectionString", "")
-    if not connection_string:
-        raise HTTPException(status_code=500, detail="Cosmos DB connection is not configured.")
-
-    if _mongo_client is None:
-        _mongo_client = MongoClient(connection_string)
-
-    database_name = os.getenv("RAG_DATABASE_NAME", "ragdb")
+    database = get_mongo_database()
     collection_name = os.getenv("RAG_COLLECTION_NAME", "documents")
-    collection = _mongo_client[database_name][collection_name]
+    collection = database[collection_name]
     ensure_collection_indexes(collection)
     return collection
 
@@ -336,9 +430,21 @@ def api_health() -> dict[str, Any]:
 @app.get("/api/me")
 def me(x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL")) -> dict[str, Any]:
     principal = decode_client_principal(x_ms_client_principal)
+    tenant_context = get_tenant_context(x_ms_client_principal)
+    app_roles: list[str] = []
+
+    if principal:
+        try:
+            tenant_context = resolve_tenant_context_with_app_roles(tenant_context)
+            app_roles = tenant_context["appRoles"]
+        except HTTPException:
+            # Keep /api/me available even when DB config is incomplete.
+            pass
+
     return {
         "authenticated": principal is not None,
-        "roles": sorted(get_principal_roles(principal)),
+        "roles": sorted(tenant_context["roles"]),
+        "appRoles": sorted(app_roles),
         "principal": principal,
     }
 
@@ -367,7 +473,7 @@ def index_document(
     x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL"),
 ) -> dict[str, Any]:
     runtime_config = get_runtime_config()
-    tenant_context = get_tenant_context(x_ms_client_principal)
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
 
     if runtime_config["requireTenantContext"] and not tenant_context["companyId"]:
         raise HTTPException(status_code=403, detail="Missing company context in principal claims.")
@@ -435,7 +541,7 @@ def rag_chat(
     if not chat_deployment:
         raise HTTPException(status_code=500, detail="Chat deployment is not configured.")
 
-    tenant_context = get_tenant_context(x_ms_client_principal)
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
     if runtime_config["requireTenantContext"] and not tenant_context["companyId"]:
         raise HTTPException(status_code=403, detail="Missing company context in principal claims.")
 
@@ -515,7 +621,7 @@ def publish_event(
     payload: PublishEventRequest,
     x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL"),
 ) -> dict[str, Any]:
-    tenant_context = get_tenant_context(x_ms_client_principal)
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
     require_roles(
         tenant_context["roles"],
         {"administrator", "companyadmin"},
@@ -579,11 +685,108 @@ async def eventgrid_worker(request: Request, aeg_event_type: str | None = Header
 
 @app.get("/api/admin/tenant-context")
 def admin_tenant_context(x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL")) -> dict[str, Any]:
-    tenant_context = get_tenant_context(x_ms_client_principal)
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
     require_roles(tenant_context["roles"], {"administrator"}, "Administrator role is required.")
 
     return {
         "companyId": tenant_context["companyId"],
         "userId": tenant_context["userId"],
         "roles": sorted(tenant_context["roles"]),
+        "appRoles": sorted(tenant_context["appRoles"]),
+    }
+
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    q: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=8, ge=1, le=25),
+    x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL"),
+) -> dict[str, Any]:
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
+    require_roles(tenant_context["roles"], {"administrator"}, "Administrator role is required.")
+
+    user_collection = get_user_collection()
+    query: dict[str, Any] = {}
+
+    normalized_q = q.strip() if isinstance(q, str) else ""
+    if normalized_q:
+        escaped = re.escape(normalized_q)
+        regex = {"$regex": escaped, "$options": "i"}
+        query = {
+            "$or": [
+                {"user_id": regex},
+                {"user_details": regex},
+                {"company_id": regex},
+            ]
+        }
+
+    projection = {
+        "_id": 0,
+        "user_id": 1,
+        "user_details": 1,
+        "company_id": 1,
+        "roles": 1,
+        "lastLoginAt": 1,
+    }
+    cursor = user_collection.find(query, projection).sort("lastLoginAt", -1).limit(limit)
+    users: list[dict[str, Any]] = []
+    for item in cursor:
+        roles = item.get("roles") if isinstance(item.get("roles"), list) else []
+        users.append(
+            {
+                "userId": item.get("user_id"),
+                "userDetails": item.get("user_details"),
+                "companyId": item.get("company_id"),
+                "appRoles": sorted([_normalize_role(role) for role in roles if isinstance(role, str)]),
+                "lastLoginAt": item.get("lastLoginAt"),
+            }
+        )
+
+    return {"users": users}
+
+
+@app.put("/api/admin/users/{user_id}/roles")
+def admin_update_user_roles(
+    user_id: str,
+    payload: UpdateUserRolesRequest,
+    x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL"),
+) -> dict[str, Any]:
+    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
+    require_roles(tenant_context["roles"], {"administrator"}, "Administrator role is required.")
+
+    normalized_roles: list[str] = []
+    for role in payload.roles:
+        normalized = _normalize_role(role)
+        if normalized and normalized != "authenticated" and normalized not in normalized_roles:
+            normalized_roles.append(normalized)
+
+    if not normalized_roles:
+        normalized_roles = [get_default_app_role()]
+
+    now = datetime.now(tz=timezone.utc).isoformat()
+    user_collection = get_user_collection()
+    user_collection.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "roles": normalized_roles,
+                "updatedAt": now,
+                "updatedBy": tenant_context.get("userId"),
+                "company_id": payload.company_id,
+            },
+            "$setOnInsert": {
+                "user_id": user_id,
+                "createdAt": now,
+                "createdBy": tenant_context.get("userId"),
+                "lastLoginAt": now,
+            },
+        },
+        upsert=True,
+    )
+
+    return {
+        "updated": True,
+        "userId": user_id,
+        "appRoles": normalized_roles,
+        "companyId": payload.company_id,
     }
