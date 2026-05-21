@@ -232,21 +232,11 @@
       return;
     }
 
-    try {
-      const response = await fetch(`${apiBaseUrl}/admin/tenant-context`, {
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        adminCheckError = `Admin context check returned ${response.status}.`;
-        return;
-      }
-
-      adminContext = (await response.json()) as AdminTenantContextResponse;
-    } catch (error) {
-      adminCheckError =
-        error instanceof Error ? error.message : 'Unable to verify administrator capabilities.';
-    }
+    adminContext = {
+      userId: me.principal.userId ?? null,
+      roles: me.roles ?? me.principal.userRoles ?? [],
+      appRoles: me.appRoles ?? []
+    };
   });
 </script>
 

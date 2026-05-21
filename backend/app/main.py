@@ -685,7 +685,16 @@ async def eventgrid_worker(request: Request, aeg_event_type: str | None = Header
 
 @app.get("/api/admin/tenant-context")
 def admin_tenant_context(x_ms_client_principal: str | None = Header(default=None, alias="X-MS-CLIENT-PRINCIPAL")) -> dict[str, Any]:
-    tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
+    try:
+        tenant_context = resolve_tenant_context_with_app_roles(get_tenant_context(x_ms_client_principal))
+    except HTTPException as error:
+        if error.status_code == 500:
+            raise HTTPException(
+                status_code=503,
+                detail="Administrator context is temporarily unavailable. Please try again later.",
+            ) from error
+        raise
+
     require_roles(tenant_context["roles"], {"administrator"}, "Administrator role is required.")
 
     return {
